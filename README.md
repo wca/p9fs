@@ -8,7 +8,11 @@ p9fs also targets:
 * FreeBSD guests to talk to the PCI device provided by KVM for that purpose.
   This is exported as a VirtIO driver.
 
+Any reading of the 9P2000.u RFC requires reading the [original RFC], as the
+RFC is defined largely as documenting modifications.
+
 [Plan9 RFC]: http://ericvh.github.io/9p-rfc/rfc9p2000.u.html
+[original RFC]: http://ericvh.github.io/9p-rfc/rfc9p2000.html
 
 # Plan9 filesystem specifications
 
