@@ -172,55 +172,55 @@
  * - 
  */
 
- /*
-  * 2.2 Directories
-  *
-  * - Directories are created by create with DMDIR set in the permissions
-  *   argument.  The members of a directory can be found with
-  *   read(5).  All directories must support walks to the directory ..
-  *   (dot-dot) meaning parent directory, although by convention directories
-  *   contain no explicit entry for .. or . (dot).  The parent of the root
-  *   directory of a server's tree is itself.
-  *
-  * - Each file server maintains a set of user and group names.  Each user
-  *   can be a member of any number of groups.  Each group has a group leader
-  *   who has special privileges.  Every file request has an implicit user id
-  *   (copied from the original attach) and an implicit set of groups (every
-  *   group of which the user is a member).
-  */
+/*
+ * 2.2 Directories
+ *
+ * - Directories are created by create with DMDIR set in the permissions
+ *   argument.  The members of a directory can be found with
+ *   read(5).  All directories must support walks to the directory ..
+ *   (dot-dot) meaning parent directory, although by convention directories
+ *   contain no explicit entry for .. or . (dot).  The parent of the root
+ *   directory of a server's tree is itself.
+ *
+ * - Each file server maintains a set of user and group names.  Each user
+ *   can be a member of any number of groups.  Each group has a group leader
+ *   who has special privileges.  Every file request has an implicit user id
+ *   (copied from the original attach) and an implicit set of groups (every
+ *   group of which the user is a member).
+ */
 
- /*
-  * 2.3 Access Permissions
-  *
-  * - Each file has an associated owner and group id and three sets of
-  *   permissions: those of the owner, those of the group, and those of
-  *   ``other'' users.  When the owner attempts to do something to a file,
-  *   the owner, group, and other permissions are consulted, and if any of
-  *   them grant the requested permission, the operation is allowed.  For
-  *   someone who is not the owner, but is a member of the file's group, the
-  *   group and other permissions are consulted.  For everyone else, the
-  *   other permissions are used.  Each set of permissions says whether
-  *   reading is allowed, whether writing is allowed, and whether executing
-  *   is allowed.  A walk in a directory is regarded as executing the
-  *   directory, not reading it.  Permissions are kept in the low-order bits
-  *   of the file mode: owner read/write/execute permission represented as
-  *   1 in bits 8, 7, and 6 respectively (using 0 to number the low order).
-  *   The group permissions are in bits 5, 4, and 3, and the other
-  *   permissions are in bits 2, 1, and 0.
-  *
-  * - The file mode contains some additional attributes besides the
-  *   permissions.  If bit 31 (DMDIR) is set, the file is a directory; if
-  *   bit 30 (DMAPPEND) is set, the file is append-only (offset is ignored
-  *   in writes); if bit 29 (DMEXCL) is set, the file is exclusive- use
-  *   (only one client may have it open at a time); if bit 27 (DMAUTH) is set,
-  *   the file is an authentication file established by auth messages; if
-  *   bit 26 (DMTMP) is set, the contents of the file (or directory) are not
-  *   included in nightly archives.  (Bit 28 is skipped for historical
-  *   reasons.)  These bits are reproduced, from the top bit down, in the
-  *   type byte of the Qid: QTDIR, QTAPPEND, QTEXCL, (skipping one bit)
-  *   QTAUTH, and QTTMP.  The name QTFILE, defined to be zero, identifies
-  *   the value of the type for a plain file.
-  */
+/*
+ * 2.3 Access Permissions
+ *
+ * - Each file has an associated owner and group id and three sets of
+ *   permissions: those of the owner, those of the group, and those of
+ *   ``other'' users.  When the owner attempts to do something to a file,
+ *   the owner, group, and other permissions are consulted, and if any of
+ *   them grant the requested permission, the operation is allowed.  For
+ *   someone who is not the owner, but is a member of the file's group, the
+ *   group and other permissions are consulted.  For everyone else, the
+ *   other permissions are used.  Each set of permissions says whether
+ *   reading is allowed, whether writing is allowed, and whether executing
+ *   is allowed.  A walk in a directory is regarded as executing the
+ *   directory, not reading it.  Permissions are kept in the low-order bits
+ *   of the file mode: owner read/write/execute permission represented as
+ *   1 in bits 8, 7, and 6 respectively (using 0 to number the low order).
+ *   The group permissions are in bits 5, 4, and 3, and the other
+ *   permissions are in bits 2, 1, and 0.
+ *
+ * - The file mode contains some additional attributes besides the
+ *   permissions.  If bit 31 (DMDIR) is set, the file is a directory; if
+ *   bit 30 (DMAPPEND) is set, the file is append-only (offset is ignored
+ *   in writes); if bit 29 (DMEXCL) is set, the file is exclusive- use
+ *   (only one client may have it open at a time); if bit 27 (DMAUTH) is set,
+ *   the file is an authentication file established by auth messages; if
+ *   bit 26 (DMTMP) is set, the contents of the file (or directory) are not
+ *   included in nightly archives.  (Bit 28 is skipped for historical
+ *   reasons.)  These bits are reproduced, from the top bit down, in the
+ *   type byte of the Qid: QTDIR, QTAPPEND, QTEXCL, (skipping one bit)
+ *   QTAUTH, and QTTMP.  The name QTFILE, defined to be zero, identifies
+ *   the value of the type for a plain file.
+ */
 
 /**************************************************************************
  * Plan9 protocol definitions section
