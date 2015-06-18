@@ -269,14 +269,43 @@ enum p9fs_msg_type {
 	Rwstat,
 };
 
-/*
- * All 9P2000* messages are prefixed with: size[4] <Type> tag[2]
- */
+/* All 9P2000* messages are prefixed with: size[4] <Type> tag[2] */
 struct p9fs_msg_hdr {
 	uint32_t	hdr_size;
 	uint8_t		hdr_type;
 	uint16_t	hdr_tag;
 };
+
+/*
+ * Common structures for 9P2000 message payload items.
+ */
+
+/* QID: Unique identification for the file being accessed */
+struct p9fs_qid {
+	uint8_t qid_mode;
+	uint32_t qid_version;
+	uint64_t qid_path;
+};
+
+/* Plan9-specific stat structure */
+struct p9fs_stat {
+	uint16_t stat_size;
+	uint16_t stat_type;
+	uint32_t stat_dev;
+	struct p9fs_qid stat_qid;
+	uint32_t stat_mode;
+	uint32_t stat_atime;
+	uint32_t stat_mtime;
+	uint64_t stat_length;
+	/* stat_name[s] */
+	/* stat_uid[s] */
+	/* stat_gid[s] */
+	/* stat_muid[s] */
+};
+
+/*
+ * Basic structures for 9P2000 message types.
+ */
 
 struct p9fs_msg_Tversion {
 	struct p9fs_msg_hdr Tversion_hdr;
@@ -299,7 +328,7 @@ struct p9fs_msg_Tauth {
 
 struct p9fs_msg_Rauth {
 	struct p9fs_msg_hdr Rauth_hdr;
-	uint8_t Rauth_aqid[13];
+	struct p9fs_qid Rauth_aqid;
 };
 
 struct p9fs_msg_Tattach {
@@ -312,7 +341,7 @@ struct p9fs_msg_Tattach {
 
 struct p9fs_msg_Rattach {
 	struct p9fs_msg_hdr Rattach_hdr;
-	uint8_t Rattach_qid[13];
+	struct p9fs_qid Rattach_qid;
 };
 
 struct p9fs_msg_Rerror {
@@ -341,7 +370,7 @@ struct p9fs_msg_Twalk {
 struct p9fs_msg_Rwalk {
 	struct p9fs_msg_hdr Rwalk_hdr;
 	uint16_t Rwalk_nwqid;
-	/* Rwalk_nwqid[13][] */
+	/* struct p9fs_qid Rwalk_nwqid[] */
 };
 
 struct p9fs_msg_Topen {
@@ -352,7 +381,7 @@ struct p9fs_msg_Topen {
 
 struct p9fs_msg_Ropen {
 	struct p9fs_msg_hdr Ropen_hdr;
-	uint8_t Ropen_qid[13];
+	struct p9fs_qid Ropen_qid;
 	uint32_t Ropen_iounit;
 };
 
@@ -366,7 +395,7 @@ struct p9fs_msg_Tcreate {
 
 struct p9fs_msg_Rcreate {
 	struct p9fs_msg_hdr Rcreate_hdr;
-	uint8_t Rcreate_qid[13];
+	struct p9fs_qid Rcreate_qid;
 	uint32_t Rcreate_iounit;
 };
 
@@ -417,22 +446,6 @@ struct p9fs_msg_Rremove {
 struct p9fs_msg_Tstat {
 	struct p9fs_msg_hdr Tstat_hdr;
 	uint32_t Tstat_fid;
-};
-
-/* Plan9-specific stat structure */
-struct p9fs_stat {
-	uint16_t stat_size;
-	uint16_t stat_type;
-	uint32_t stat_dev;
-	uint8_t stat_qid[13]; /* XXX Replace all QIDs with a struct */
-	uint32_t stat_mode;
-	uint32_t stat_atime;
-	uint32_t stat_mtime;
-	uint64_t stat_length;
-	/* stat_name[s] */
-	/* stat_uid[s] */
-	/* stat_gid[s] */
-	/* stat_muid[s] */
 };
 
 struct p9fs_msg_Rstat {
