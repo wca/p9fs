@@ -232,8 +232,9 @@
 #define	NOTAG		(ushort)~0
 #define	NOFID		(uint32_t)~0
 
-#define	PLAN9_VERSION	"9P2000"
-#define	UNIX_VERSION	PLAN9_VERSION ".u"
+#define	PLAN9_VERSION		"9P2000"
+#define	UNIX_VERSION		PLAN9_VERSION ".u"
+#define	PLAN9_MSG_MAX_SIZE	UINT16_MAX
 
 /*
  * The message type used as the fifth byte for all 9P2000 messages.
@@ -464,9 +465,7 @@ struct p9fs_msg_Rwstat {
 };
 
 /*
- * Some 9P messages contain Pascal-style strings that can be any size, so
- * they are not directly mappable to C.  Consequently, a set of helpers must
- * be used to access data embedded in the various message types.
+ * The main 9P message management structure.
  */
 union p9fs_msg {
 	struct p9fs_msg_hdr p9msg_hdr;
@@ -499,18 +498,51 @@ union p9fs_msg {
 	struct p9fs_msg_Rwstat p9msg_Rwstat;
 };
 
-/* Copy the string from the buffer. */
+/*
+ * Helper functions for working with 9P messages.
+ */
+
+/* Get size/data pointers from the message. */
 static inline int
-p9fs_msg_to_str(const char *dst, union p9fs_msg *msg, uint32_t msg_off)
+p9fs_msg_to_str(char **strp, uint16_t *szp, union p9fs_msg *msg, uint32_t off)
 {
-	return (EINVAL);
+	char *base = (char *)((uintptr_t)msg + off);
+
+	*szp = *(uint16_t *)base;
+	if (msg->p9msg_hdr.hdr_size < (off + *szp)) {
+		*szp = 0;
+		return (EINVAL);
+	}
+	*strp = base + sizeof(*szp);
+	return (0);
 }
 
-/* Copy a C string into the specified message buffer location. */
+/*
+ * Copy a C string into the specified message buffer location.
+ * 'off' is expected to be offsetof() for the string element's size, so it
+ * should include the message header and any preceding elements.
+ */
 static inline int
-p9fs_msg_from_str(union p9fs_msg *msg, uint32_t msg_off, const char *dst)
+p9fs_msg_from_str(union p9fs_msg *msg, uint32_t off, const char *src)
 {
-	return (EINVAL);
+	uint16_t avail = PLAN9_MSG_MAX_SIZE;
+	uint16_t *start = (uint16_t *)((uintptr_t)msg + off);
+	char *buf;
+
+	off += sizeof(uint16_t);
+	if (avail <= off)
+		return (EINVAL);
+
+	avail -= off;
+	buf = (char *)((uintptr_t)msg + off);
+	while (*src != '\0') {
+		if (avail == 0)
+			return (ENAMETOOLONG);
+		*buf++ = *src++;
+		avail--;
+	}
+	*start = (uint8_t *)buf - (uint8_t *)start;
+	return (0);
 }
 
 #endif /* __P9FS_PROTO_H__ */

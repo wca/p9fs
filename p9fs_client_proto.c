@@ -36,6 +36,7 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
+#include <sys/stdint.h>
 #include <sys/types.h>
 #include <sys/errno.h>
 
