@@ -235,4 +235,269 @@
 #define	PLAN9_VERSION	"9P2000"
 #define	UNIX_VERSION	PLAN9_VERSION ".u"
 
+/*
+ * The message type used as the fifth byte for all 9P2000 messages.
+ */
+enum p9fs_msg_type {
+	Tversion =	100,
+	Rversion,
+	Tauth,
+	Rauth,
+	Tattach,
+	Rattach,
+	/* Terror is illegal */
+	Rerror =	107,
+	Tflush,
+	Rflush,
+	Twalk,
+	Rwalk,
+	Topen,
+	Ropen,
+	Tcreate,
+	Rcreate,
+	Tread,
+	Rread,
+	Twrite,
+	Rwrite,
+	Tclunk,
+	Rclunk,
+	Tremove,
+	Rremove,
+	Tstat,
+	Rstat,
+	Twstat,
+	Rwstat,
+};
+
+/*
+ * All 9P2000* messages are prefixed with: size[4] <Type> tag[2]
+ */
+struct p9fs_msg_hdr {
+	uint32_t	hdr_size;
+	uint8_t		hdr_type;
+	uint16_t	hdr_tag;
+};
+
+struct p9fs_msg_Tversion {
+	struct p9fs_msg_hdr Tversion_hdr;
+	uint32_t Tversion_max_size;
+	/* Tversion_version[s] */
+};
+
+struct p9fs_msg_Rversion {
+	struct p9fs_msg_hdr Rversion_hdr;
+	uint32_t Rversion_max_size;
+	/* Rversion_version[s] */
+};
+
+struct p9fs_msg_Tauth {
+	struct p9fs_msg_hdr Tauth_hdr;
+	uint32_t Tauth_afid;
+	/* Tauth_uname[s] */
+	/* Tauth_aname[s] */
+};
+
+struct p9fs_msg_Rauth {
+	struct p9fs_msg_hdr Rauth_hdr;
+	uint8_t Rauth_aqid[13];
+};
+
+struct p9fs_msg_Tattach {
+	struct p9fs_msg_hdr Tattach_hdr;
+	uint32_t Tattach_fid;
+	uint32_t Tattach_afid;
+	/* Tattach_uname[s] */
+	/* Tattach_aname[s] */
+};
+
+struct p9fs_msg_Rattach {
+	struct p9fs_msg_hdr Rattach_hdr;
+	uint8_t Rattach_qid[13];
+};
+
+struct p9fs_msg_Rerror {
+	struct p9fs_msg_hdr Rerror_hdr;
+	/* Rerror_ename[s] */
+	uint32_t Rerror_errno;
+};
+
+struct p9fs_msg_Tflush {
+	struct p9fs_msg_hdr Tflush_hdr;
+	uint16_t Tflush_oldtag;
+};
+
+struct p9fs_msg_Rflush {
+	struct p9fs_msg_hdr Rflush_hdr;
+};
+
+struct p9fs_msg_Twalk {
+	struct p9fs_msg_hdr Twalk_hdr;
+	uint32_t Twalk_fid;
+	uint32_t Twalk_newfid;
+	uint16_t Twalk_nwname;
+	/* Twalk_wname[s][] */
+};
+
+struct p9fs_msg_Rwalk {
+	struct p9fs_msg_hdr Rwalk_hdr;
+	uint16_t Rwalk_nwqid;
+	/* Rwalk_nwqid[13][] */
+};
+
+struct p9fs_msg_Topen {
+	struct p9fs_msg_hdr Topen_hdr;
+	uint32_t Topen_fid;
+	uint8_t Topen_mode;
+};
+
+struct p9fs_msg_Ropen {
+	struct p9fs_msg_hdr Ropen_hdr;
+	uint8_t Ropen_qid[13];
+	uint32_t Ropen_iounit;
+};
+
+struct p9fs_msg_Tcreate {
+	struct p9fs_msg_hdr Tcreate_hdr;
+	uint32_t Tcreate_fid;
+	/* Tcreate_name[s] */
+	uint32_t Tcreate_perm;
+	uint8_t Tcreate_mode;
+};
+
+struct p9fs_msg_Rcreate {
+	struct p9fs_msg_hdr Rcreate_hdr;
+	uint8_t Rcreate_qid[13];
+	uint32_t Rcreate_iounit;
+};
+
+struct p9fs_msg_Tread {
+	struct p9fs_msg_hdr Tread_hdr;
+	uint32_t Tread_fid;
+	uint64_t Tread_offset;
+	uint32_t Tread_count;
+};
+
+struct p9fs_msg_Rread {
+	struct p9fs_msg_hdr Rread_hdr;
+	uint32_t Rread_count;
+	/* uint8_t data[count] */
+};
+
+struct p9fs_msg_Twrite {
+	struct p9fs_msg_hdr Twrite_hdr;
+	uint32_t Twrite_fid;
+	uint64_t Twrite_offset;
+	uint32_t Twrite_count;
+	/* uint8_t data[count] */
+};
+
+struct p9fs_msg_Rwrite {
+	struct p9fs_msg_hdr Rwrite_hdr;
+	uint32_t Rwrite_count;
+};
+
+struct p9fs_msg_Tclunk {
+	struct p9fs_msg_hdr Tclunk_hdr;
+	uint32_t Tclunk_fid;
+};
+
+struct p9fs_msg_Rclunk {
+	struct p9fs_msg_hdr Rclunk_hdr;
+};
+
+struct p9fs_msg_Tremove {
+	struct p9fs_msg_hdr Tremove_hdr;
+	uint32_t Tremove_fid;
+};
+
+struct p9fs_msg_Rremove {
+	struct p9fs_msg_hdr Rremove_hdr;
+};
+
+struct p9fs_msg_Tstat {
+	struct p9fs_msg_hdr Tstat_hdr;
+	uint32_t Tstat_fid;
+};
+
+/* Plan9-specific stat structure */
+struct p9fs_stat {
+	uint16_t stat_size;
+	uint16_t stat_type;
+	uint32_t stat_dev;
+	uint8_t stat_qid[13]; /* XXX Replace all QIDs with a struct */
+	uint32_t stat_mode;
+	uint32_t stat_atime;
+	uint32_t stat_mtime;
+	uint64_t stat_length;
+	/* stat_name[s] */
+	/* stat_uid[s] */
+	/* stat_gid[s] */
+	/* stat_muid[s] */
+};
+
+struct p9fs_msg_Rstat {
+	struct p9fs_msg_hdr Rstat_hdr;
+	struct p9fs_stat Rstat_stat;
+};
+
+struct p9fs_msg_Twstat {
+	struct p9fs_msg_hdr Twstat_hdr;
+	uint32_t Twstat_fid;
+	struct p9fs_stat Twstat_stat;
+};
+
+struct p9fs_msg_Rwstat {
+	struct p9fs_msg_hdr Rwstat_hdr;
+};
+
+/*
+ * Some 9P messages contain Pascal-style strings that can be any size, so
+ * they are not directly mappable to C.  Consequently, a set of helpers must
+ * be used to access data embedded in the various message types.
+ */
+union p9fs_msg {
+	struct p9fs_msg_hdr p9msg_hdr;
+	struct p9fs_msg_Tversion p9msg_Tversion;
+	struct p9fs_msg_Rversion p9msg_Rversion;
+	struct p9fs_msg_Tauth p9msg_Tauth;
+	struct p9fs_msg_Rauth p9msg_Rauth;
+	struct p9fs_msg_Tattach p9msg_Tattach;
+	struct p9fs_msg_Rattach p9msg_Rattach;
+	struct p9fs_msg_Rerror p9msg_Rerror;
+	struct p9fs_msg_Tflush p9msg_Tflush;
+	struct p9fs_msg_Rflush p9msg_Rflush;
+	struct p9fs_msg_Twalk p9msg_Twalk;
+	struct p9fs_msg_Rwalk p9msg_Rwalk;
+	struct p9fs_msg_Topen p9msg_Topen;
+	struct p9fs_msg_Ropen p9msg_Ropen;
+	struct p9fs_msg_Tcreate p9msg_Tcreate;
+	struct p9fs_msg_Rcreate p9msg_Rcreate;
+	struct p9fs_msg_Tread p9msg_Tread;
+	struct p9fs_msg_Rread p9msg_Rread;
+	struct p9fs_msg_Twrite p9msg_Twrite;
+	struct p9fs_msg_Rwrite p9msg_Rwrite;
+	struct p9fs_msg_Tclunk p9msg_Tclunk;
+	struct p9fs_msg_Rclunk p9msg_Rclunk;
+	struct p9fs_msg_Tremove p9msg_Tremove;
+	struct p9fs_msg_Rremove p9msg_Rremove;
+	struct p9fs_msg_Tstat p9msg_Tstat;
+	struct p9fs_msg_Rstat p9msg_Rstat;
+	struct p9fs_msg_Twstat p9msg_Twstat;
+	struct p9fs_msg_Rwstat p9msg_Rwstat;
+};
+
+/* Copy the string from the buffer. */
+static inline int
+p9fs_msg_to_str(const char *dst, union p9fs_msg *msg, uint32_t msg_off)
+{
+	return (EINVAL);
+}
+
+/* Copy a C string into the specified message buffer location. */
+static inline int
+p9fs_msg_from_str(union p9fs_msg *msg, uint32_t msg_off, const char *dst)
+{
+	return (EINVAL);
+}
+
 #endif /* __P9FS_PROTO_H__ */
