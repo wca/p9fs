@@ -50,6 +50,8 @@ __FBSDID("$FreeBSD$");
 
 static const char *p9_opts[] = {
 	"debug",
+	"hostname",
+	"path",
 };
 
 struct p9fsmount {
@@ -60,6 +62,8 @@ struct p9fsmount {
 	int p9_debuglevel;
 	struct socket *p9_socket;
 	struct mount *p9_mountp;
+	char p9_path[MAXPATHLEN];
+	char p9_hostname[256];
 };
 #define	VFSTOP9(mp) ((mp)->mnt_data)
 
@@ -71,16 +75,16 @@ p9fs_mount_parse_opts(struct mount *mp)
 	struct p9fsmount *p9mp = VFSTOP9(mp);
 	char *opt;
 	int error = EINVAL;
-	int ret;
+	int fromnamelen, ret;
 
 	if (vfs_getopt(mp->mnt_optnew, "debug", (void **)&opt, NULL) == 0) {
 		if (opt == NULL) {
-			vfs_mount_error(mp, "illegal debug");
+			vfs_mount_error(mp, "must specify value for debug");
 			goto out;
 		}
 		ret = sscanf(opt, "%d", &p9mp->p9_debuglevel);
 		if (ret != 1 || p9mp->p9_debuglevel < 0) {
-			vfs_mount_error(mp, "illegal debug: %s", opt);
+			vfs_mount_error(mp, "illegal debug value: %s", opt);
 			goto out;
 		}
 	}
@@ -91,13 +95,42 @@ p9fs_mount_parse_opts(struct mount *mp)
 
 	ret = vfs_getopt(mp->mnt_optnew, "addr",
 	    (void **)&p9mp->p9_sockaddr, &p9mp->p9_sockaddr_len);
-	if (ret == 0) {
-		if (p9mp->p9_sockaddr_len > SOCK_MAXADDRLEN) {
-			error = ENAMETOOLONG;
-			goto out;
-		}
-	} else {
+	if (ret != 0) {
 		vfs_mount_error(mp, "No server address");
+		goto out;
+	}
+	if (p9mp->p9_sockaddr_len > SOCK_MAXADDRLEN) {
+		error = ENAMETOOLONG;
+		goto out;
+	}
+
+	ret = vfs_getopt(mp->mnt_optnew, "hostname", (void **)&opt, NULL);
+	if (ret != 0) {
+		vfs_mount_error(mp, "No remote host");
+		goto out;
+	}
+	ret = strlcpy(p9mp->p9_hostname, opt, sizeof (p9mp->p9_hostname));
+	if (ret >= sizeof (p9mp->p9_hostname)) {
+		error = ENAMETOOLONG;
+		goto out;
+	}
+
+	ret = vfs_getopt(mp->mnt_optnew, "path", (void **)&opt, NULL);
+	if (ret != 0) {
+		vfs_mount_error(mp, "No remote path");
+		goto out;
+	}
+	ret = strlcpy(p9mp->p9_path, opt, sizeof (p9mp->p9_path));
+	if (ret >= sizeof (p9mp->p9_path)) {
+		error = ENAMETOOLONG;
+		goto out;
+	}
+
+	fromnamelen = sizeof (mp->mnt_stat.f_mntfromname);
+	ret = snprintf(mp->mnt_stat.f_mntfromname, fromnamelen,
+	    "%s:%s", p9mp->p9_hostname, p9mp->p9_path);
+	if (ret >= fromnamelen) {
+		error = ENAMETOOLONG;
 		goto out;
 	}
 

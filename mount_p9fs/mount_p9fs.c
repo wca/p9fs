@@ -77,12 +77,15 @@ usage(int exitcode, const char *errfmt, ...)
 	fprintf(stderr, "Usage: %s [opts] pathspec mntpt\n\n", getprogname());
 	fprintf(stderr, "where [opts] can be:\n");
 	fprintf(stderr, "   -o option=value\n\n");
+	fprintf(stderr, "See the mount_p9fs(8) man page for more details.\n\n");
 	exit(exitcode);
 }
 
 struct mnt_context {
 	struct iovec *iov;
 	int iovlen;
+	int socktype;
+	int found_addr;
 };
 
 static void
@@ -98,6 +101,13 @@ parse_opt_o(struct mnt_context *ctx)
 	opt = optarg;
 	build_iovec(&ctx->iov, &ctx->iovlen, opt,
 	    __DECONST(void *, val), strlen(val) + 1);
+
+	if (strcmp(opt, "proto") == 0) {
+		if (strcasecmp(val, "tcp") == 0)
+			ctx->socktype = SOCK_STREAM;
+		else
+			ctx->socktype = SOCK_DGRAM;
+	}
 }
 
 /*
@@ -137,6 +147,9 @@ try_addrinfo(struct mnt_context *ctx, struct addrinfo *ai)
 		}
 	}
 
+	build_iovec(&ctx->iov, &ctx->iovlen, "addr",
+	    &ai->ai_addr, ai->ai_addrlen);
+	ctx->found_addr = 1;
 	return (0);
 }
 
@@ -156,7 +169,7 @@ parse_required_args(struct mnt_context *ctx, char **argv)
 	*path++ = '\0';
 
 	hints.ai_flags = AI_NUMERICHOST;
-	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_socktype = ctx->socktype == 0 ? SOCK_STREAM : ctx->socktype;
 	error = getaddrinfo(argv[0], NULL, &hints, &res);
 	if (error != 0) {
 		/* Try again, with name lookups. */
@@ -173,7 +186,9 @@ parse_required_args(struct mnt_context *ctx, char **argv)
 		error = try_addrinfo(ctx, ai);
 	freeaddrinfo(res);
 	if (error != 0)
-		usage(error, "Unable to connect to %s", argv[0]);
+		errx(error, "Unable to connect to %s", argv[0]);
+	if (ctx->found_addr == 0)
+		errx(1, "No valid address found for %s", argv[0]);
 
 	build_iovec(&ctx->iov, &ctx->iovlen, "hostname", argv[0], (size_t)-1);
 	build_iovec(&ctx->iov, &ctx->iovlen, "path", path, (size_t)-1);
