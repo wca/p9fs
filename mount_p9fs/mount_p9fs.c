@@ -74,10 +74,8 @@ usage(int exitcode, const char *errfmt, ...)
 		fprintf(stderr, "\n");
 	}
 
-	fprintf(stderr, "Usage: %s [opts] pathspec mntpt\n\n", getprogname());
-	fprintf(stderr, "where [opts] can be:\n");
-	fprintf(stderr, "   -o option=value\n\n");
-	fprintf(stderr, "See the mount_p9fs(8) man page for more details.\n\n");
+	fprintf(stderr, "Usage: %s [-o option=value] pathspec mntpt\n",
+	    getprogname());
 	exit(exitcode);
 }
 
@@ -201,7 +199,7 @@ main(int argc, char **argv)
 	struct mnt_context ctx = { 0 };
 	const char *optstr = "o:";
 
-	while ((ch = getopt(argc, argv, optstr)) != 0) {
+	while ((ch = getopt(argc, argv, optstr)) != -1) {
 		switch (ch) {
 		case 'o':
 			parse_opt_o(&ctx);
