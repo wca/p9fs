@@ -49,9 +49,11 @@ __FBSDID("$FreeBSD$");
 #include <sys/vnode.h>
 
 static const char *p9_opts[] = {
+	"addr",
 	"debug",
 	"hostname",
 	"path",
+	"proto",
 };
 
 struct p9fsmount {

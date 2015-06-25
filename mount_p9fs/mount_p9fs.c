@@ -209,7 +209,9 @@ parse_required_args(struct mnt_context *ctx, char **argv)
 	if (ctx->found_addr == 0)
 		errx(1, "No working address found for %s", argv[0]);
 
+	build_iovec(&ctx->iov, &ctx->iovlen, "fstype", "p9fs", (size_t)-1);
 	build_iovec(&ctx->iov, &ctx->iovlen, "hostname", argv[0], (size_t)-1);
+	build_iovec(&ctx->iov, &ctx->iovlen, "fspath", argv[1], (size_t)-1);
 	build_iovec(&ctx->iov, &ctx->iovlen, "path", path, (size_t)-1);
 	*(path - 1) = ':';
 }
