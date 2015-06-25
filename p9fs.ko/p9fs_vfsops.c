@@ -183,8 +183,10 @@ p9fs_connect(struct mount *mp)
 
 	error = socreate(p9mp->p9_sockaddr.sa_family, &p9mp->p9_socket,
 	    p9mp->p9_socktype, p9mp->p9_proto, curthread->td_ucred, curthread);
-	if (error != 0)
+	if (error != 0) {
+		vfs_mount_error(mp, "socreate");
 		goto out;
+	}
 
 	so = p9mp->p9_socket;
 	error = soconnect(so, &p9mp->p9_sockaddr, curthread);
@@ -201,6 +203,7 @@ p9fs_connect(struct mount *mp)
 	}
 	SOCK_UNLOCK(so);
 	if (error) {
+		vfs_mount_error(mp, "soconnect");
 		if (error == EINTR)
 			so->so_state &= ~SS_ISCONNECTING;
 		goto out;
@@ -311,7 +314,7 @@ p9fs_mount(struct mount *mp)
 
 out:
 	if (error != 0)
-		p9fs_unmount(mp, 0);
+		(void) p9fs_unmount(mp, 0);
 	return (error);
 }
 

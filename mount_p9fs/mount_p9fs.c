@@ -85,6 +85,7 @@ struct mnt_context {
 	int iovlen;
 	int socktype;
 	int found_addr;
+	char errmsg[256];
 };
 
 static void
@@ -213,6 +214,8 @@ parse_required_args(struct mnt_context *ctx, char **argv)
 	build_iovec(&ctx->iov, &ctx->iovlen, "hostname", argv[0], (size_t)-1);
 	build_iovec(&ctx->iov, &ctx->iovlen, "fspath", argv[1], (size_t)-1);
 	build_iovec(&ctx->iov, &ctx->iovlen, "path", path, (size_t)-1);
+	build_iovec(&ctx->iov, &ctx->iovlen, "errmsg", ctx->errmsg,
+	    sizeof (ctx->errmsg));
 	*(path - 1) = ':';
 }
 
@@ -247,9 +250,8 @@ main(int argc, char **argv)
 			errx(1, "p9fs is not in the kernel");
 	}
 
-	error = nmount(ctx.iov, ctx.iovlen, 0);
-	if (error == -1)
-		err(1, "Unable to mount %s at %s", argv[0], argv[1]);
+	if (nmount(ctx.iov, ctx.iovlen, 0))
+		err(1, "Can't mount %s at %s: %s", argv[0], argv[1], ctx.errmsg);
 
 	return (error);
 }
