@@ -205,12 +205,13 @@ parse_required_args(struct mnt_context *ctx, char **argv)
 		error = try_addrinfo(ctx, ai);
 	freeaddrinfo(res);
 	if (error > 0)
-		errx(error, "Unable to connect to %s", argv[0]);
+		err(error, "Unable to connect to %s", argv[0]);
 	if (ctx->found_addr == 0)
 		errx(1, "No working address found for %s", argv[0]);
 
 	build_iovec(&ctx->iov, &ctx->iovlen, "hostname", argv[0], (size_t)-1);
 	build_iovec(&ctx->iov, &ctx->iovlen, "path", path, (size_t)-1);
+	*(path - 1) = ':';
 }
 
 int
@@ -245,6 +246,8 @@ main(int argc, char **argv)
 	}
 
 	error = nmount(ctx.iov, ctx.iovlen, 0);
+	if (error == -1)
+		err(1, "Unable to mount %s at %s", argv[0], argv[1]);
 
 	return (error);
 }
