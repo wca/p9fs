@@ -44,6 +44,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/errno.h>
 
 #include <arpa/inet.h>
+#include <netinet/in.h>
 
 #include <ctype.h>
 #include <err.h>
@@ -108,6 +109,17 @@ parse_opt_o(struct mnt_context *ctx)
 	}
 }
 
+static void
+extract_addrinfo(struct addrinfo *ai, int *family, char *hn, char *sn)
+{
+	struct sockaddr_in *sin;
+	struct sockaddr_in6 *sin6;
+
+	*family = ai->ai_addr->sa_family;
+	(void) getnameinfo(ai->ai_addr, ai->ai_addrlen, hn, NI_MAXHOST,
+	    sn, NI_MAXSERV, NI_NUMERICHOST | NI_NUMERICSERV);
+}
+
 /*
  * Try the given addrinfo.  Returns:
  *   -1: if the attempt failed for a reason not caused by local machine issues.
@@ -118,6 +130,15 @@ static int
 try_addrinfo(struct mnt_context *ctx, struct addrinfo *ai)
 {
 	int error, s;
+
+	{
+		int family, port;
+		char hostname[NI_MAXHOST], servname[NI_MAXSERV];
+
+		extract_addrinfo(ai, &family, hostname, servname);
+		printf("Trying family %d at %s service %s ...\n", family,
+		    hostname, servname);
+	}
 
 	s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
 	if (s == -1) {
@@ -157,7 +178,7 @@ parse_required_args(struct mnt_context *ctx, char **argv)
 	char *path;
 	int addrlen, error;
 	struct addrinfo *ai, *res;
-	struct addrinfo hints;
+	struct addrinfo hints = { 0 };
 	struct sockaddr *addr;
 
 	/* Parse pathspec */
@@ -168,11 +189,11 @@ parse_required_args(struct mnt_context *ctx, char **argv)
 
 	hints.ai_flags = AI_NUMERICHOST;
 	hints.ai_socktype = ctx->socktype == 0 ? SOCK_STREAM : ctx->socktype;
-	error = getaddrinfo(argv[0], NULL, &hints, &res);
+	error = getaddrinfo(argv[0], "9pfs", &hints, &res);
 	if (error != 0) {
 		/* Try again, with name lookups. */
 		hints.ai_flags = AI_CANONNAME;
-		error = getaddrinfo(argv[0], NULL, &hints, &res);
+		error = getaddrinfo(argv[0], "9pfs", &hints, &res);
 	}
 	if (error != 0)
 		errx(error, "Unable to lookup %s: %s", argv[0],
@@ -183,10 +204,10 @@ parse_required_args(struct mnt_context *ctx, char **argv)
 	for (ai = res; error == -1 && ai != NULL; ai = ai->ai_next)
 		error = try_addrinfo(ctx, ai);
 	freeaddrinfo(res);
-	if (error != 0)
+	if (error > 0)
 		errx(error, "Unable to connect to %s", argv[0]);
 	if (ctx->found_addr == 0)
-		errx(1, "No valid address found for %s", argv[0]);
+		errx(1, "No working address found for %s", argv[0]);
 
 	build_iovec(&ctx->iov, &ctx->iovlen, "hostname", argv[0], (size_t)-1);
 	build_iovec(&ctx->iov, &ctx->iovlen, "path", path, (size_t)-1);
