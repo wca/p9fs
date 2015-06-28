@@ -82,9 +82,9 @@ usage(int exitcode, const char *errfmt, ...)
 
 struct mnt_context {
 	struct iovec *iov;
+	struct sockaddr saddr;
 	int iovlen;
 	int socktype;
-	int found_addr;
 	char errmsg[256];
 };
 
@@ -131,6 +131,7 @@ static int
 try_addrinfo(struct mnt_context *ctx, struct addrinfo *ai)
 {
 	int error, s;
+	void *addr;
 
 	{
 		int family, port;
@@ -167,9 +168,8 @@ try_addrinfo(struct mnt_context *ctx, struct addrinfo *ai)
 		}
 	}
 
-	build_iovec(&ctx->iov, &ctx->iovlen, "addr",
-	    &ai->ai_addr, ai->ai_addrlen);
-	ctx->found_addr = 1;
+	bcopy(ai->ai_addr, &ctx->saddr, ai->ai_addrlen);
+	build_iovec(&ctx->iov, &ctx->iovlen, "addr", &ctx->saddr, ai->ai_addrlen);
 	return (0);
 }
 
@@ -207,7 +207,7 @@ parse_required_args(struct mnt_context *ctx, char **argv)
 	freeaddrinfo(res);
 	if (error > 0)
 		err(error, "Unable to connect to %s", argv[0]);
-	if (ctx->found_addr == 0)
+	if (ctx->saddr.sa_family == 0)
 		errx(1, "No working address found for %s", argv[0]);
 
 	build_iovec(&ctx->iov, &ctx->iovlen, "fstype", "p9fs", (size_t)-1);
@@ -243,15 +243,22 @@ main(int argc, char **argv)
 		usage(1, "Must specify required arguments");
 
 	parse_required_args(&ctx, argv);
+#if 0
 	if (modfind("p9fs") < 0) {
 		if (kldload("p9fs") < 0)
-			errx(1, "p9fs could not be loaded in the kernel");
+			err(1, "p9fs could not be loaded in the kernel");
 		if (modfind("p9fs") < 0)
-			errx(1, "p9fs is not in the kernel");
+			err(1, "p9fs is not in the kernel");
 	}
+#endif
 
-	if (nmount(ctx.iov, ctx.iovlen, 0))
-		err(1, "Can't mount %s at %s: %s", argv[0], argv[1], ctx.errmsg);
+	if (nmount(ctx.iov, ctx.iovlen, 0) == -1) {
+		if (ctx.errmsg[0] != '\0')
+			errx(1, "Mounting %s at %s: %s",
+			    argv[0], argv[1], ctx.errmsg);
+		else
+			err(1, "Mounting %s at %s", argv[0], argv[1]);
+	}
 
 	return (error);
 }

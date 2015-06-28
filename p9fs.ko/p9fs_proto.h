@@ -229,13 +229,6 @@
 #ifndef	__P9FS_PROTO_H__
 #define	__P9FS_PROTO_H__
 
-#define	NOTAG		(ushort)~0
-#define	NOFID		(uint32_t)~0
-
-#define	PLAN9_VERSION		"9P2000"
-#define	UNIX_VERSION		PLAN9_VERSION ".u"
-#define	PLAN9_MSG_MAX_SIZE	UINT16_MAX
-
 /*
  * The message type used as the fifth byte for all 9P2000 messages.
  */
@@ -306,6 +299,9 @@ struct p9fs_stat {
 
 /*
  * Basic structures for 9P2000 message types.
+ *
+ * Aside from Rerror and Tcreate, all variable length fields follow fixed
+ * length fields.
  */
 
 struct p9fs_msg_Tversion {
@@ -498,51 +494,38 @@ union p9fs_msg {
 	struct p9fs_msg_Rwstat p9msg_Rwstat;
 };
 
-/*
- * Helper functions for working with 9P messages.
- */
+#define	NOTAG		(unsigned short)~0
+#define	NOFID		(uint32_t)~0
 
-/* Get size/data pointers from the message. */
-static inline int
-p9fs_msg_to_str(char **strp, uint16_t *szp, union p9fs_msg *msg, uint32_t off)
-{
-	char *base = (char *)((uintptr_t)msg + off);
+#define	P9_VERS		"9P2000"
+#define	UN_VERS		P9_VERS ".u"
+#define	P9_MSG_MAX	MAXPHYS + sizeof (struct p9fs_msg_hdr)
 
-	*szp = *(uint16_t *)base;
-	if (msg->p9msg_hdr.hdr_size < (off + *szp)) {
-		*szp = 0;
-		return (EINVAL);
-	}
-	*strp = base + sizeof(*szp);
-	return (0);
-}
+/**************************************************************************
+ * Plan9 session details section
+ **************************************************************************/
 
-/*
- * Copy a C string into the specified message buffer location.
- * 'off' is expected to be offsetof() for the string element's size, so it
- * should include the message header and any preceding elements.
- */
-static inline int
-p9fs_msg_from_str(union p9fs_msg *msg, uint32_t off, const char *src)
-{
-	uint16_t avail = PLAN9_MSG_MAX_SIZE;
-	uint16_t *start = (uint16_t *)((uintptr_t)msg + off);
-	char *buf;
+struct p9fs_session {
+	struct sockaddr p9s_sockaddr;
+	int p9s_sockaddr_len;
+	struct socket *p9s_sock;
+	int p9s_socktype;
+	int p9s_proto;
+};
 
-	off += sizeof(uint16_t);
-	if (avail <= off)
-		return (EINVAL);
-
-	avail -= off;
-	buf = (char *)((uintptr_t)msg + off);
-	while (*src != '\0') {
-		if (avail == 0)
-			return (ENAMETOOLONG);
-		*buf++ = *src++;
-		avail--;
-	}
-	*start = (uint8_t *)buf - (uint8_t *)start;
-	return (0);
-}
+int p9fs_client_version(struct p9fs_session *);
+int p9fs_client_auth(struct p9fs_session *);
+int p9fs_client_attach(struct p9fs_session *);
+int p9fs_client_clunk(void);
+int p9fs_client_error(void);
+int p9fs_client_flush(void);
+int p9fs_client_open(void);
+int p9fs_client_create(void);
+int p9fs_client_read(void);
+int p9fs_client_write(void);
+int p9fs_client_remove(void);
+int p9fs_client_stat(void);
+int p9fs_client_wstat(void);
+int p9fs_client_walk(void);
 
 #endif /* __P9FS_PROTO_H__ */

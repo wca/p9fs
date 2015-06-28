@@ -39,6 +39,10 @@ __FBSDID("$FreeBSD$");
 #include <sys/stdint.h>
 #include <sys/types.h>
 #include <sys/errno.h>
+#include <sys/param.h>
+#include <sys/socket.h>
+#include <sys/socketvar.h>
+#include <sys/systm.h>
 
 #include "p9fs_proto.h"
 #include "p9fs_subr.h"
@@ -62,10 +66,31 @@ __FBSDID("$FreeBSD$");
  * This implementation only handles 9P2000.u, so if any other version is
  * returned, the call will simply bail.
  */
-static int
-p9fs_client_version(void)
+int
+p9fs_client_version(struct p9fs_session *p9s)
 {
-	return (EINVAL);
+	void *m;
+	int error;
+	uint32_t max_size = P9_MSG_MAX;
+
+retry:
+	m = p9fs_msg_create(Tversion, NOTAG);
+	if (m == NULL)
+		return (ENOBUFS);
+
+	error = p9fs_msg_add(m, sizeof (uint32_t), &max_size);
+	if (error == 0)
+		error = p9fs_msg_add_string(m, UN_VERS, strlen(UN_VERS));
+	if (error != 0) {
+		p9fs_msg_destroy(m);
+		return (error);
+	}
+
+	error = p9fs_msg_send(p9s, m);
+	if (error == EMSGSIZE)
+		goto retry;
+
+	return (error);
 }
 
 /*
@@ -91,14 +116,14 @@ p9fs_client_version(void)
  *
  * This implementation only supports authentication-free connections for now.
  */
-static int
-p9fs_client_auth(void)
+int
+p9fs_client_auth(struct p9fs_session *p9s)
 {
 	return (EINVAL);
 }
 
-static int
-p9fs_client_attach(void)
+int
+p9fs_client_attach(struct p9fs_session *p9s)
 {
 	return (EINVAL);
 }
@@ -114,7 +139,7 @@ p9fs_client_attach(void)
  ********
  *
  */
-static int
+int
 p9fs_client_clunk(void)
 {
 	return (EINVAL);
@@ -130,7 +155,7 @@ p9fs_client_clunk(void)
  ********
  *
  */
-static int
+int
 p9fs_client_error(void)
 {
 	return (EINVAL);
@@ -147,7 +172,7 @@ p9fs_client_error(void)
  ********
  *
  */
-static int
+int
 p9fs_client_flush(void)
 {
 	return (EINVAL);
@@ -167,13 +192,13 @@ p9fs_client_flush(void)
  ********
  *
  */
-static int
+int
 p9fs_client_open(void)
 {
 	return (EINVAL);
 }
 
-static int
+int
 p9fs_client_create(void)
 {
 	return (EINVAL);
@@ -193,13 +218,13 @@ p9fs_client_create(void)
  ********
  *
  */
-static int
+int
 p9fs_client_read(void)
 {
 	return (EINVAL);
 }
 
-static int
+int
 p9fs_client_write(void)
 {
 	return (EINVAL);
@@ -216,7 +241,7 @@ p9fs_client_write(void)
  ********
  *
  */
-static int
+int
 p9fs_client_remove(void)
 {
 	return (EINVAL);
@@ -236,13 +261,13 @@ p9fs_client_remove(void)
  ********
  *
  */
-static int
+int
 p9fs_client_stat(void)
 {
 	return (EINVAL);
 }
 
-static int
+int
 p9fs_client_wstat(void)
 {
 	return (EINVAL);
@@ -259,7 +284,7 @@ p9fs_client_wstat(void)
  ********
  *
  */
-static int
+int
 p9fs_client_walk(void)
 {
 	return (EINVAL);

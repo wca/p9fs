@@ -31,6 +31,11 @@
 #ifndef	__P9FS_SUBR_H__
 #define	__P9FS_SUBR_H__
 
-
+/* Plan9 message handling routines using opaque handles */
+void *p9fs_msg_create(enum p9fs_msg_type, uint16_t);
+int p9fs_msg_add(void *, size_t, void *);
+int p9fs_msg_add_string(void *, const char *, uint16_t);
+int p9fs_msg_send(struct p9fs_session *, void *);
+void p9fs_msg_destroy(void *);
 
 #endif

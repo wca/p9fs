@@ -48,6 +48,8 @@ __FBSDID("$FreeBSD$");
 #include <sys/proc.h>
 #include <sys/vnode.h>
 
+#include "p9fs_proto.h"
+
 static const char *p9_opts[] = {
 	"addr",
 	"debug",
@@ -57,12 +59,8 @@ static const char *p9_opts[] = {
 };
 
 struct p9fsmount {
-	struct sockaddr p9_sockaddr;
-	int p9_sockaddr_len;
-	int p9_socktype;
-	int p9_proto;
 	int p9_debuglevel;
-	struct socket *p9_socket;
+	struct p9fs_session p9_session;
 	struct mount *p9_mountp;
 	char p9_path[MAXPATHLEN];
 	char p9_hostname[256];
@@ -75,6 +73,8 @@ static int
 p9fs_mount_parse_opts(struct mount *mp)
 {
 	struct p9fsmount *p9mp = VFSTOP9(mp);
+	struct p9fs_session *p9s = &p9mp->p9_session;
+	struct sockaddr *saddr = NULL;
 	char *opt;
 	int error = EINVAL;
 	int fromnamelen, ret;
@@ -95,16 +95,17 @@ p9fs_mount_parse_opts(struct mount *mp)
 	if (mp->mnt_flag & MNT_UPDATE)
 		return (0);
 
-	ret = vfs_getopt(mp->mnt_optnew, "addr",
-	    (void **)&p9mp->p9_sockaddr, &p9mp->p9_sockaddr_len);
-	if (ret != 0) {
+	ret = vfs_getopt(mp->mnt_optnew, "addr", (void **)&saddr,
+	    &p9s->p9s_sockaddr_len);
+	if (ret != 0 || saddr == NULL) {
 		vfs_mount_error(mp, "No server address");
 		goto out;
 	}
-	if (p9mp->p9_sockaddr_len > SOCK_MAXADDRLEN) {
+	if (p9s->p9s_sockaddr_len > SOCK_MAXADDRLEN) {
 		error = ENAMETOOLONG;
 		goto out;
 	}
+	bcopy(saddr, &p9s->p9s_sockaddr, p9s->p9s_sockaddr_len);
 
 	ret = vfs_getopt(mp->mnt_optnew, "hostname", (void **)&opt, NULL);
 	if (ret != 0) {
@@ -138,11 +139,11 @@ p9fs_mount_parse_opts(struct mount *mp)
 
 	if (vfs_getopt(mp->mnt_optnew, "proto", (void **)&opt, NULL) == 0) {
 		if (strcasecmp(opt, "tcp") == 0) {
-			p9mp->p9_socktype = SOCK_STREAM;
-			p9mp->p9_proto = IPPROTO_TCP;
+			p9s->p9s_socktype = SOCK_STREAM;
+			p9s->p9s_proto = IPPROTO_TCP;
 		} else if (strcasecmp(opt, "udp") == 0) {
-			p9mp->p9_socktype = SOCK_DGRAM;
-			p9mp->p9_proto = IPPROTO_UDP;
+			p9s->p9s_socktype = SOCK_DGRAM;
+			p9s->p9s_proto = IPPROTO_UDP;
 		} else {
 			vfs_mount_error(mp, "illegal proto: %s", opt);
 			goto out;
@@ -178,18 +179,19 @@ static int
 p9fs_connect(struct mount *mp)
 {
 	struct p9fsmount *p9mp = VFSTOP9(mp);
+	struct p9fs_session *p9s = &p9mp->p9_session;
 	struct socket *so;
 	int error;
 
-	error = socreate(p9mp->p9_sockaddr.sa_family, &p9mp->p9_socket,
-	    p9mp->p9_socktype, p9mp->p9_proto, curthread->td_ucred, curthread);
+	error = socreate(p9s->p9s_sockaddr.sa_family, &p9s->p9s_sock,
+	    p9s->p9s_socktype, p9s->p9s_proto, curthread->td_ucred, curthread);
 	if (error != 0) {
 		vfs_mount_error(mp, "socreate");
 		goto out;
 	}
 
-	so = p9mp->p9_socket;
-	error = soconnect(so, &p9mp->p9_sockaddr, curthread);
+	so = p9s->p9s_sock;
+	error = soconnect(so, &p9s->p9s_sockaddr, curthread);
 	SOCK_LOCK(so);
 	while ((so->so_state & SS_ISCONNECTING) && so->so_error == 0) {
 		error = msleep(&so->so_timeo, SOCK_MTX(so), PSOCK | PCATCH,
@@ -230,9 +232,14 @@ out:
 static int
 p9fs_negotiate(struct p9fsmount *p9mp)
 {
-	int error = EINVAL;
+	int error;
 
-	/* Call into p9fs_client_version/auth/attach */
+	error = p9fs_client_version(&p9mp->p9_session);
+	printf("p9fs_client_version ret=%d\n", error);
+	if (error == 0) {
+		error = p9fs_client_attach(&p9mp->p9_session);
+		printf("p9fs_client_attach ret=%d\n", error);
+	}
 
 	return (error);
 }
@@ -245,14 +252,15 @@ p9fs_mount_alloc(struct p9fsmount **p9mpp, struct mount *mp)
 	(*p9mpp)->p9_mountp = mp;
 
 	/* Default values. */
-	(*p9mpp)->p9_socktype = SOCK_STREAM;
-	(*p9mpp)->p9_proto = IPPROTO_TCP;
+	(*p9mpp)->p9_session.p9s_socktype = SOCK_STREAM;
+	(*p9mpp)->p9_session.p9s_proto = IPPROTO_TCP;
 }
 
 static int
 p9fs_unmount(struct mount *mp, int mntflags)
 {
 	struct p9fsmount *p9mp = VFSTOP9(mp);
+	struct p9fs_session *p9s = &p9mp->p9_session;
 	int error, flags, i;
 
 	error = 0;
@@ -265,9 +273,9 @@ p9fs_unmount(struct mount *mp, int mntflags)
 
 	for (i = 0; i < 10; i++) {
 		error = vflush(mp, 0, flags, curthread);
-		if (error != 0 && (mntflags & MNT_FORCE) == 0)
+		if (error == 0 || (mntflags & MNT_FORCE) == 0)
 			break;
-		/* Sleep until interrupted or 1 second expires. */
+		/* Sleep until interrupted or 1 tick expires. */
 		error = tsleep(&error, PSOCK, "p9unmnt", 1);
 		if (error == EINTR)
 			break;
@@ -275,8 +283,8 @@ p9fs_unmount(struct mount *mp, int mntflags)
 	if (error != 0)
 		goto out;
 
-	if (p9mp->p9_socket != NULL)
-		(void) soclose(p9mp->p9_socket);
+	if (p9s->p9s_sock != NULL)
+		(void) soclose(p9s->p9s_sock);
 
 	free(p9mp, M_P9MNT);
 	mp->mnt_data = NULL;
@@ -305,8 +313,10 @@ p9fs_mount(struct mount *mp)
 		goto out;
 
 	error = p9fs_connect(mp);
-	if (error != 0)
+	if (error != 0) {
+		printf("p9fs_connect error=%d\n", error);
 		goto out;
+	}
 
 	error = p9fs_negotiate(p9mp);
 	if (error != 0)
@@ -314,7 +324,7 @@ p9fs_mount(struct mount *mp)
 
 out:
 	if (error != 0)
-		(void) p9fs_unmount(mp, 0);
+		(void) p9fs_unmount(mp, MNT_FORCE);
 	return (error);
 }
 
