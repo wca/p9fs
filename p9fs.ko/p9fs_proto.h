@@ -268,7 +268,7 @@ struct p9fs_msg_hdr {
 	uint32_t	hdr_size;
 	uint8_t		hdr_type;
 	uint16_t	hdr_tag;
-};
+} __attribute__((packed));
 
 /*
  * Common structures for 9P2000 message payload items.
@@ -314,19 +314,19 @@ struct p9fs_msg_Rversion {
 	struct p9fs_msg_hdr Rversion_hdr;
 	uint32_t Rversion_max_size;
 	/* Rversion_version[s] */
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Tauth {
 	struct p9fs_msg_hdr Tauth_hdr;
 	uint32_t Tauth_afid;
 	/* Tauth_uname[s] */
 	/* Tauth_aname[s] */
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Rauth {
 	struct p9fs_msg_hdr Rauth_hdr;
 	struct p9fs_qid Rauth_aqid;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Tattach {
 	struct p9fs_msg_hdr Tattach_hdr;
@@ -334,27 +334,27 @@ struct p9fs_msg_Tattach {
 	uint32_t Tattach_afid;
 	/* Tattach_uname[s] */
 	/* Tattach_aname[s] */
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Rattach {
 	struct p9fs_msg_hdr Rattach_hdr;
 	struct p9fs_qid Rattach_qid;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Rerror {
 	struct p9fs_msg_hdr Rerror_hdr;
 	/* Rerror_ename[s] */
 	uint32_t Rerror_errno;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Tflush {
 	struct p9fs_msg_hdr Tflush_hdr;
 	uint16_t Tflush_oldtag;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Rflush {
 	struct p9fs_msg_hdr Rflush_hdr;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Twalk {
 	struct p9fs_msg_hdr Twalk_hdr;
@@ -362,25 +362,25 @@ struct p9fs_msg_Twalk {
 	uint32_t Twalk_newfid;
 	uint16_t Twalk_nwname;
 	/* Twalk_wname[s][] */
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Rwalk {
 	struct p9fs_msg_hdr Rwalk_hdr;
 	uint16_t Rwalk_nwqid;
 	/* struct p9fs_qid Rwalk_nwqid[] */
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Topen {
 	struct p9fs_msg_hdr Topen_hdr;
 	uint32_t Topen_fid;
 	uint8_t Topen_mode;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Ropen {
 	struct p9fs_msg_hdr Ropen_hdr;
 	struct p9fs_qid Ropen_qid;
 	uint32_t Ropen_iounit;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Tcreate {
 	struct p9fs_msg_hdr Tcreate_hdr;
@@ -388,26 +388,26 @@ struct p9fs_msg_Tcreate {
 	/* Tcreate_name[s] */
 	uint32_t Tcreate_perm;
 	uint8_t Tcreate_mode;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Rcreate {
 	struct p9fs_msg_hdr Rcreate_hdr;
 	struct p9fs_qid Rcreate_qid;
 	uint32_t Rcreate_iounit;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Tread {
 	struct p9fs_msg_hdr Tread_hdr;
 	uint32_t Tread_fid;
 	uint64_t Tread_offset;
 	uint32_t Tread_count;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Rread {
 	struct p9fs_msg_hdr Rread_hdr;
 	uint32_t Rread_count;
 	/* uint8_t data[count] */
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Twrite {
 	struct p9fs_msg_hdr Twrite_hdr;
@@ -415,50 +415,50 @@ struct p9fs_msg_Twrite {
 	uint64_t Twrite_offset;
 	uint32_t Twrite_count;
 	/* uint8_t data[count] */
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Rwrite {
 	struct p9fs_msg_hdr Rwrite_hdr;
 	uint32_t Rwrite_count;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Tclunk {
 	struct p9fs_msg_hdr Tclunk_hdr;
 	uint32_t Tclunk_fid;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Rclunk {
 	struct p9fs_msg_hdr Rclunk_hdr;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Tremove {
 	struct p9fs_msg_hdr Tremove_hdr;
 	uint32_t Tremove_fid;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Rremove {
 	struct p9fs_msg_hdr Rremove_hdr;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Tstat {
 	struct p9fs_msg_hdr Tstat_hdr;
 	uint32_t Tstat_fid;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Rstat {
 	struct p9fs_msg_hdr Rstat_hdr;
 	struct p9fs_stat Rstat_stat;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Twstat {
 	struct p9fs_msg_hdr Twstat_hdr;
 	uint32_t Twstat_fid;
 	struct p9fs_stat Twstat_stat;
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Rwstat {
 	struct p9fs_msg_hdr Rwstat_hdr;
-};
+} __attribute__((packed));
 
 /*
  * The main 9P message management structure.
@@ -492,7 +492,7 @@ union p9fs_msg {
 	struct p9fs_msg_Rstat p9msg_Rstat;
 	struct p9fs_msg_Twstat p9msg_Twstat;
 	struct p9fs_msg_Rwstat p9msg_Rwstat;
-};
+} __attribute__((packed));
 
 #define	NOTAG		(unsigned short)~0
 #define	NOFID		(uint32_t)~0
@@ -505,12 +505,45 @@ union p9fs_msg {
  * Plan9 session details section
  **************************************************************************/
 
+struct p9fs_req {
+	TAILQ_ENTRY(p9fs_req) req_link;
+	uint16_t req_tag;
+	struct mbuf *req_msg;
+	int req_error;
+};
+TAILQ_HEAD(p9fs_req_list, p9fs_req);
+
+struct p9fs_str {
+	uint16_t p9str_size;
+	char *p9str_str;
+};
+
+struct p9fs_recv {
+	uint32_t p9r_resid;
+	uint32_t p9r_size;
+	int p9r_error;
+	int p9r_soupcalls;
+	struct mbuf *p9r_msg;
+	struct p9fs_req_list p9r_reqs;
+};
+
+enum p9s_state {
+	P9S_INIT,
+	P9S_RUNNING,
+	P9S_CLOSING,
+	P9S_CLOSED,
+};
+
 struct p9fs_session {
+	enum p9s_state p9s_state;
 	struct sockaddr p9s_sockaddr;
+	struct mtx p9s_lock;
+	struct p9fs_recv p9s_recv;
 	int p9s_sockaddr_len;
 	struct socket *p9s_sock;
 	int p9s_socktype;
 	int p9s_proto;
+	int p9s_threads;
 };
 
 int p9fs_client_version(struct p9fs_session *);

@@ -49,6 +49,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/vnode.h>
 
 #include "p9fs_proto.h"
+#include "p9fs_subr.h"
 
 static const char *p9_opts[] = {
 	"addr",
@@ -170,6 +171,15 @@ p9fs_setsockopt(struct socket *so, int sopt_name)
 	sosetopt(so, &sopt);
 }
 
+static int
+p9fs_client_upcall(struct socket *so, void *arg, int waitflag __unused)
+{
+	struct p9fsmount *p9mp = arg;
+
+	p9fs_msg_recv(&p9mp->p9_session);
+	return (SU_OK);
+}
+
 /*
  * XXX Need to implement reconnecting as necessary.  If that were to be
  *     needed, most likely all current vnodes would have to be renegotiated
@@ -216,12 +226,9 @@ p9fs_connect(struct mount *mp)
 	if (so->so_proto->pr_protocol == IPPROTO_TCP)
 		p9fs_setsockopt(so, TCP_NODELAY);
 
-	/* XXX Do we need this?  Probably?  See clnt_vc_soupcall(). */
-#if 0
 	SOCKBUF_LOCK(&so->so_rcv);
-	soupcall_set(so, SO_RCV, p9fs_sock_upcall, p9mp);
+	soupcall_set(so, SO_RCV, p9fs_client_upcall, p9mp);
 	SOCKBUF_UNLOCK(&so->so_rcv);
-#endif
 
 	error = 0;
 
@@ -233,13 +240,16 @@ static int
 p9fs_negotiate(struct p9fsmount *p9mp)
 {
 	int error;
+	struct p9fs_session *p9s = &p9mp->p9_session;
 
-	error = p9fs_client_version(&p9mp->p9_session);
+	error = p9fs_client_version(p9s);
 	printf("p9fs_client_version ret=%d\n", error);
 	if (error == 0) {
-		error = p9fs_client_attach(&p9mp->p9_session);
+		error = p9fs_client_attach(p9s);
 		printf("p9fs_client_attach ret=%d\n", error);
 	}
+	if (error == 0)
+		p9s->p9s_state = P9S_RUNNING;
 
 	return (error);
 }
@@ -247,9 +257,15 @@ p9fs_negotiate(struct p9fsmount *p9mp)
 static void
 p9fs_mount_alloc(struct p9fsmount **p9mpp, struct mount *mp)
 {
+	struct p9fs_session *p9s;
+
 	*p9mpp = malloc(sizeof (struct p9fsmount), M_P9MNT, M_WAITOK | M_ZERO);
 	mp->mnt_data = *p9mpp;
 	(*p9mpp)->p9_mountp = mp;
+
+	p9s = &(*p9mpp)->p9_session;
+	mtx_init(&p9s->p9s_lock, "p9s->p9s_lock", NULL, MTX_DEF);
+	TAILQ_INIT(&p9s->p9s_recv.p9r_reqs);
 
 	/* Default values. */
 	(*p9mpp)->p9_session.p9s_socktype = SOCK_STREAM;
@@ -283,8 +299,33 @@ p9fs_unmount(struct mount *mp, int mntflags)
 	if (error != 0)
 		goto out;
 
-	if (p9s->p9s_sock != NULL)
+	mtx_lock(&p9s->p9s_lock);
+	if (p9s->p9s_sock != NULL) {
+		struct p9fs_recv *p9r = &p9s->p9s_recv;
+		struct sockbuf *rcv = &p9s->p9s_sock->so_rcv;
+
+		p9s->p9s_state = P9S_CLOSING;
+		mtx_unlock(&p9s->p9s_lock);
+
+		SOCKBUF_LOCK(rcv);
+		soupcall_clear(p9s->p9s_sock, SO_RCV);
+		while (p9r->p9r_soupcalls > 0)
+			(void) msleep(&p9r->p9r_soupcalls, SOCKBUF_MTX(rcv),
+			    0, "p9rcvup", 0);
+		SOCKBUF_UNLOCK(rcv);
 		(void) soclose(p9s->p9s_sock);
+
+		/*
+		 * XXX Can there really be any such threads?  If vflush()
+		 *     has completed, there shouldn't be.  See if we can
+		 *     remove this and related code later.
+		 */
+		mtx_lock(&p9s->p9s_lock);
+		while (p9s->p9s_threads > 0)
+			msleep(p9s, &p9s->p9s_lock, 0, "p9sclose", 0);
+		p9s->p9s_state = P9S_CLOSED;
+	}
+	mtx_unlock(&p9s->p9s_lock);
 
 	free(p9mp, M_P9MNT);
 	mp->mnt_data = NULL;

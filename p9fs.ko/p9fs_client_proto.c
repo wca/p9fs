@@ -43,6 +43,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/socket.h>
 #include <sys/socketvar.h>
 #include <sys/systm.h>
+#include <sys/mbuf.h>
 
 #include "p9fs_proto.h"
 #include "p9fs_subr.h"
@@ -86,9 +87,23 @@ retry:
 		return (error);
 	}
 
-	error = p9fs_msg_send(p9s, m);
+	error = p9fs_msg_send(p9s, &m);
 	if (error == EMSGSIZE)
 		goto retry;
+
+	if (m != NULL) {
+		struct p9fs_msg_Rversion *Rversion = p9fs_msg_get(m, 0);
+		struct p9fs_str p9str;
+
+		p9fs_msg_get_str(m, sizeof (struct p9fs_msg_Rversion), &p9str);
+		if (strncmp(p9str.p9str_str, UN_VERS, p9str.p9str_size) != 0) {
+			printf("Remote offered incompatible version '%.*s'\n",
+			    p9str.p9str_size, p9str.p9str_str);
+			error = EINVAL;
+		}
+
+		p9fs_msg_destroy(m);
+	}
 
 	return (error);
 }

@@ -41,9 +41,14 @@ __FBSDID("$FreeBSD$");
 #include <sys/socket.h>
 #include <sys/socketvar.h>
 #include <sys/proc.h>
+#include <sys/uio.h>
+#include <sys/kernel.h>
+#include <sys/malloc.h>
 
 #include "p9fs_proto.h"
 #include "p9fs_subr.h"
+
+static MALLOC_DEFINE(M_P9REQ, "p9fsreq", "Request structures for p9fs");
 
 /*
  * Plan 9 message handling.  This is primarily intended as a means of
@@ -104,33 +109,206 @@ p9fs_msg_add_string(void *mp, const char *str, uint16_t len)
 }
 
 /*
- * NB: consumes the p9 message; caller should never destroy if it sends.
+ * mp is the Plan9 payload on input; on output it is the response payload.
  */
 int
-p9fs_msg_send(struct p9fs_session *p9s, void *mp)
+p9fs_msg_send(struct p9fs_session *p9s, void **mp)
 {
-	int error;
-	int flags = 0;
+	int error, flags;
 	struct uio *uio = NULL;
-	struct mbuf *m = mp;
+	struct mbuf *m = *mp;
 	struct mbuf *control = NULL;
 	struct thread *td = curthread;
+	struct p9fs_recv *p9r = &p9s->p9s_recv;
+	struct p9fs_req *req;
+	int timo = 30 * hz;
+	uint16_t tag;
 
-	/* Prepend the packet size. */
+	req = malloc(sizeof (struct p9fs_req), M_P9REQ, M_WAITOK | M_ZERO);
+
+	/* Prepend the packet size, then re-fetch the tag. */
 	m->m_pkthdr.len = m_length(m, NULL);
 	M_PREPEND(m, sizeof (uint32_t), M_WAITOK);
 	*mtod(m, uint32_t *) = m->m_pkthdr.len;
+	m_copydata(m, offsetof(struct p9fs_msg_hdr, hdr_tag),
+	    sizeof (tag), (void *)&tag);
+	req->req_tag = tag;
 
+	mtx_lock(&p9s->p9s_lock);
+	if (p9s->p9s_state >= P9S_CLOSING) {
+		mtx_unlock(&p9s->p9s_lock);
+		free(req, M_P9REQ);
+		m_freem(m);
+		*mp = NULL;
+		return (ECONNABORTED);
+	}
+	printf("%s: inserting request for tag %d\n", __func__, tag);
+	p9s->p9s_threads++;
+	TAILQ_INSERT_TAIL(&p9r->p9r_reqs, req, req_link);
+	mtx_unlock(&p9s->p9s_lock);
+
+	flags = 0;
 	error = sosend(p9s->p9s_sock, &p9s->p9s_sockaddr, uio, m, control,
 	    flags, td);
-
+	*mp = NULL;
 	if (error == EMSGSIZE) {
 		SOCKBUF_LOCK(&p9s->p9s_sock->so_snd);
 		sbwait(&p9s->p9s_sock->so_snd);
 		SOCKBUF_UNLOCK(&p9s->p9s_sock->so_snd);
 	}
 
+	mtx_lock(&p9s->p9s_lock);
+	/*
+	 * Check to see if a response was generated for this request while
+	 * waiting for the lock.
+	 */
+	if (req->req_error != 0 && error == 0)
+		error = req->req_error;
+
+	if (error == 0 && req->req_msg == NULL) {
+		printf("%s: waiting on tag %d\n", __func__, tag);
+		error = msleep(req, &p9s->p9s_lock, PCATCH, "p9reqsend", timo);
+	}
+
+	TAILQ_REMOVE(&p9r->p9r_reqs, req, req_link);
+	if (error == 0)
+		error = req->req_error;
+
+	/* Ensure any response is disposed of in case of a local error. */
+	*mp = req->req_msg;
+	if (error != 0 && *mp != NULL) {
+		m_freem(*mp);
+		*mp = NULL;
+	}
+
+	p9s->p9s_threads--;
+	wakeup(p9s);
+	mtx_unlock(&p9s->p9s_lock);
+
+	free(req, M_P9REQ);
+
 	return (error);
+}
+
+void
+p9fs_msg_recv(struct p9fs_session *p9s)
+{
+	struct p9fs_recv *p9r = &p9s->p9s_recv;
+	struct mbuf *control, *m;
+	struct uio uio;
+	int error, rcvflag;
+	struct sockaddr **psa = NULL;
+
+	p9r->p9r_soupcalls++;
+
+again:
+	/* Is the socket still waiting for a new record's size? */
+	if (p9r->p9r_resid == 0) {
+		if (sbavail(&p9s->p9s_sock->so_rcv) < sizeof (p9r->p9r_resid)
+		 || (p9s->p9s_sock->so_rcv.sb_state & SBS_CANTRCVMORE) != 0
+		 || p9s->p9s_sock->so_error != 0)
+			goto out;
+
+		uio.uio_resid = sizeof (p9r->p9r_resid);
+	} else {
+		uio.uio_resid = p9r->p9r_resid;
+	}
+
+	/* Drop the sockbuf lock and do the soreceive call. */
+	SOCKBUF_UNLOCK(&p9s->p9s_sock->so_rcv);
+	rcvflag = MSG_DONTWAIT | MSG_SOCALLBCK;
+	printf("%s: soreceive(%ld bytes)\n", __func__, uio.uio_resid);
+	error = soreceive(p9s->p9s_sock, psa, &uio, &m, &control, &rcvflag);
+	SOCKBUF_LOCK(&p9s->p9s_sock->so_rcv);
+
+	/* Process errors from soreceive(). */
+	if (error == EWOULDBLOCK)
+		goto out;
+	if (error != 0 || uio.uio_resid > 0) {
+		struct p9fs_req *req;
+
+		if (error == 0)
+			error = ECONNRESET;
+
+		mtx_lock(&p9s->p9s_lock);
+		p9r->p9r_error = error;
+		TAILQ_FOREACH(req, &p9r->p9r_reqs, req_link) {
+			req->req_error = error;
+			wakeup(req);
+		}
+		mtx_unlock(&p9s->p9s_lock);
+		goto out;
+	}
+
+	if (p9r->p9r_resid == 0) {
+		/* Copy in the size, subtract itself, and reclaim the mbuf. */
+		m_copydata(m, 0, sizeof (p9r->p9r_size),
+		    (uint8_t *)&p9r->p9r_size);
+		if (p9r->p9r_size < sizeof (struct p9fs_msg_hdr)) {
+			/* XXX Reject the packet as illegal? */
+		}
+		p9r->p9r_resid = p9r->p9r_size - sizeof (p9r->p9r_size);
+		p9r->p9r_msg = m;
+		printf("%s: resid=%d\n", __func__, p9r->p9r_resid);
+
+		/* Record size is known now; retrieve the rest. */
+		goto again;
+	}
+
+	/* Chain the message to the end. */
+	m_last(p9r->p9r_msg)->m_next = m;
+
+	/* If we have a complete record, match it to a request via tag. */
+	p9r->p9r_resid = uio.uio_resid;
+	printf("%s: resid %d\n", __func__, p9r->p9r_resid);
+	if (p9r->p9r_resid == 0) {
+		int found = 0;
+		uint16_t tag;
+		struct p9fs_req *req;
+
+		m_copydata(p9r->p9r_msg, offsetof(struct p9fs_msg_hdr, hdr_tag),
+		    sizeof (uint16_t), (void *)&tag);
+
+		mtx_lock(&p9s->p9s_lock);
+		TAILQ_FOREACH(req, &p9r->p9r_reqs, req_link) {
+			if (req->req_tag == tag) {
+				printf("%s: found %p for tag %d\n",
+				    __func__, p9r->p9r_msg, tag);
+				found = 1;
+				req->req_msg = m_pullup(p9r->p9r_msg,
+				    p9r->p9r_size);
+				/* Zero tag to skip any duplicate replies. */
+				req->req_tag = 0;
+				wakeup(req);
+				break;
+			}
+		}
+		mtx_unlock(&p9s->p9s_lock);
+		if (found == 0) {
+			printf("%s: tag %d not found\n", __func__, tag);
+			m_freem(p9r->p9r_msg);
+		}
+		p9r->p9r_msg = NULL;
+	}
+
+out:
+	p9r->p9r_soupcalls--;
+	return;
+}
+
+void *
+p9fs_msg_get(void *mp, size_t off)
+{
+	return (mtod((struct mbuf *)mp, uint8_t *) + off);
+}
+
+void
+p9fs_msg_get_str(void *mp, size_t off, struct p9fs_str *str)
+{
+	uint8_t *buf = p9fs_msg_get(mp, off);
+
+	str->p9str_size = *(uint16_t *)buf;
+	str->p9str_str = (char *)(buf + sizeof (str->p9str_size));
 }
 
 void
