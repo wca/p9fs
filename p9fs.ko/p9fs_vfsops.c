@@ -47,6 +47,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/pcpu.h>
 #include <sys/proc.h>
 #include <sys/vnode.h>
+#include <sys/fnv_hash.h>
 
 #include "p9fs_proto.h"
 #include "p9fs_subr.h"
@@ -63,7 +64,6 @@ struct p9fsmount {
 	int p9_debuglevel;
 	struct p9fs_session p9_session;
 	struct mount *p9_mountp;
-	char p9_path[MAXPATHLEN];
 	char p9_hostname[256];
 };
 #define	VFSTOP9(mp) ((mp)->mnt_data)
@@ -118,21 +118,22 @@ p9fs_mount_parse_opts(struct mount *mp)
 		error = ENAMETOOLONG;
 		goto out;
 	}
+	printf("%s: hostname='%s'\n", __func__, p9mp->p9_hostname);
 
 	ret = vfs_getopt(mp->mnt_optnew, "path", (void **)&opt, NULL);
 	if (ret != 0) {
 		vfs_mount_error(mp, "No remote path");
 		goto out;
 	}
-	ret = strlcpy(p9mp->p9_path, opt, sizeof (p9mp->p9_path));
-	if (ret >= sizeof (p9mp->p9_path)) {
+	ret = strlcpy(p9s->p9s_path, opt, sizeof (p9s->p9s_path));
+	if (ret >= sizeof (p9s->p9s_path)) {
 		error = ENAMETOOLONG;
 		goto out;
 	}
 
 	fromnamelen = sizeof (mp->mnt_stat.f_mntfromname);
 	ret = snprintf(mp->mnt_stat.f_mntfromname, fromnamelen,
-	    "%s:%s", p9mp->p9_hostname, p9mp->p9_path);
+	    "%s:%s", p9mp->p9_hostname, p9s->p9s_path);
 	if (ret >= fromnamelen) {
 		error = ENAMETOOLONG;
 		goto out;
@@ -266,6 +267,10 @@ p9fs_mount_alloc(struct p9fsmount **p9mpp, struct mount *mp)
 	p9s = &(*p9mpp)->p9_session;
 	mtx_init(&p9s->p9s_lock, "p9s->p9s_lock", NULL, MTX_DEF);
 	TAILQ_INIT(&p9s->p9s_recv.p9r_reqs);
+	(void) snprintf(p9s->p9s_uname, sizeof (p9s->p9s_uname), "root");
+	p9s->p9s_uid = 0;
+	p9s->p9s_fid = NOFID;
+	p9s->p9s_afid = NOFID;
 
 	/* Default values. */
 	(*p9mpp)->p9_session.p9s_socktype = SOCK_STREAM;
@@ -369,10 +374,51 @@ out:
 	return (error);
 }
 
+extern struct vop_vector p9fs_vnops;
+
 static int
-p9fs_root(struct mount *mp, int flags, struct vnode **vpp)
+p9fs_root(struct mount *mp, int lkflags, struct vnode **vpp)
 {
-	return (EINVAL);
+	struct p9fsmount *p9mp = VFSTOP9(mp);
+	struct p9fs_session *p9s = &p9mp->p9_session;
+	struct thread *td = curthread;
+	struct vnode *nvp, *vp;
+	int error;
+	u_int hash;
+
+	*vpp = NULL;
+	hash = fnv_32_buf(p9s->p9s_path, strlen(p9s->p9s_path), FNV1_32_INIT);
+	error = vfs_hash_get(mp, hash, lkflags, td, &nvp, NULL, NULL);
+	if (error != 0)
+		return (error);
+	if (nvp != NULL) {
+		*vpp = nvp;
+		return (0);
+	}
+
+	error = getnewvnode("p9fs", mp, &p9fs_vnops, &nvp);
+	if (error != 0) {
+		return (error);
+	}
+	vp = nvp;
+	vn_lock(vp, LK_EXCLUSIVE);
+
+	error = insmntque(vp, mp);
+	if (error != 0) {
+		/* vp was vput()'d by insmntque() */
+		return (error);
+	}
+	error = vfs_hash_insert(nvp, hash, lkflags, td, &nvp, NULL, NULL);
+	if (error != 0)
+		return (error);
+	if (nvp != NULL) {
+		*vpp = nvp;
+		/* vp was vput()'d by vfs_hash_insert() */
+		return (0);
+	}
+	*vpp = vp;
+
+	return (0);
 }
 
 static int
@@ -390,7 +436,7 @@ p9fs_fhtovp(struct mount *mp, struct fid *fhp, int flags, struct vnode **vpp)
 static int
 p9fs_sync(struct mount *mp, int waitfor)
 {
-	return (EINVAL);
+	return (0);
 }
 
 struct vfsops p9fs_vfsops = {

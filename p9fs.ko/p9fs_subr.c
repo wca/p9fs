@@ -101,6 +101,7 @@ p9fs_msg_add_string(void *mp, const char *str, uint16_t len)
 {
 	struct mbuf *m = mp;
 
+	printf("%s(%s, len=%d)\n", __func__, str, len);
 	if (m_append(m, 2, (uint8_t *)&len) == 0)
 		return (EINVAL);
 	if (m_append(m, len, str) == 0)

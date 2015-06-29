@@ -151,13 +151,13 @@ p9fs_readlink(struct vop_readlink_args *ap)
 static int
 p9fs_inactive(struct vop_inactive_args *ap)
 {
-	return (EINVAL);
+	return (0);
 }
 
 static int
 p9fs_reclaim(struct vop_reclaim_args *ap)
 {
-	return (EINVAL);
+	return (0);
 }
 
 static int

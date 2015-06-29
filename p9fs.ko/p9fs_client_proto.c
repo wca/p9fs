@@ -71,7 +71,7 @@ int
 p9fs_client_version(struct p9fs_session *p9s)
 {
 	void *m;
-	int error;
+	int error = 0;
 	uint32_t max_size = P9_MSG_MAX;
 
 retry:
@@ -79,8 +79,9 @@ retry:
 	if (m == NULL)
 		return (ENOBUFS);
 
-	error = p9fs_msg_add(m, sizeof (uint32_t), &max_size);
-	if (error == 0)
+	if (error == 0) /* max_size[4] */
+		error = p9fs_msg_add(m, sizeof (uint32_t), &max_size);
+	if (error == 0) /* version[s] */
 		error = p9fs_msg_add_string(m, UN_VERS, strlen(UN_VERS));
 	if (error != 0) {
 		p9fs_msg_destroy(m);
@@ -120,6 +121,10 @@ retry:
  *   size[4] Tattach tag[2] fid[4] afid[4] uname[s] aname[s]
  *   size[4] Rattach tag[2] qid[13]
  *
+ * 9P2000.u modifies, according to py9p but not the spec:
+ *
+ *   size[4] Tattach tag[2] fid[4] afid[4] uname[s] aname[s] uid[4]
+ *
  ******** PROTOCOL NOTES
  * Tuname[s]: User identification
  * Taname[s]: File tree being attached
@@ -143,7 +148,52 @@ p9fs_client_auth(struct p9fs_session *p9s)
 int
 p9fs_client_attach(struct p9fs_session *p9s)
 {
-	return (EINVAL);
+	void *m;
+	int error = 0;
+
+retry:
+	m = p9fs_msg_create(Tattach, 0);
+	if (m == NULL)
+		return (ENOBUFS);
+
+	if (error == 0) /* fid[4] */
+		error = p9fs_msg_add(m, sizeof (uint32_t), &p9s->p9s_fid);
+	if (error == 0) /* afid[4] */
+		error = p9fs_msg_add(m, sizeof (uint32_t), &p9s->p9s_afid);
+	if (error == 0) /* uname[s] */
+		error = p9fs_msg_add_string(m, p9s->p9s_uname,
+		    strlen(p9s->p9s_uname));
+	if (error == 0) /* aname[s] */
+		error = p9fs_msg_add_string(m, p9s->p9s_path,
+		    strlen(p9s->p9s_path));
+	if (error == 0) /* uid[4] */
+		error = p9fs_msg_add(m, sizeof (uint32_t), &p9s->p9s_uid);
+	if (error != 0) {
+		p9fs_msg_destroy(m);
+		return (error);
+	}
+
+	error = p9fs_msg_send(p9s, &m);
+	if (error == EMSGSIZE)
+		goto retry;
+
+	if (m != NULL) {
+		struct p9fs_qid *qid;
+
+		error = p9fs_client_error(&m, Rattach);
+		if (error != 0)
+			return (error);
+
+		qid = p9fs_msg_get(m, sizeof (struct p9fs_msg_hdr));
+		bcopy(qid, (void *)&p9s->p9s_qid, sizeof (struct p9fs_qid));
+		printf("%s at %s: qid={%u,%u,%lu}\n", __func__,
+		    p9s->p9s_path, qid->qid_mode, qid->qid_version,
+		    qid->qid_path);
+
+		p9fs_msg_destroy(m);
+	}
+
+	return (error);
 }
 
 /*

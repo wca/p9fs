@@ -279,7 +279,7 @@ struct p9fs_qid {
 	uint8_t qid_mode;
 	uint32_t qid_version;
 	uint64_t qid_path;
-};
+} __attribute__((packed));
 
 /* Plan9-specific stat structure */
 struct p9fs_stat {
@@ -295,7 +295,7 @@ struct p9fs_stat {
 	/* stat_uid[s] */
 	/* stat_gid[s] */
 	/* stat_muid[s] */
-};
+} __attribute__((packed));
 
 /*
  * Basic structures for 9P2000 message types.
@@ -308,7 +308,7 @@ struct p9fs_msg_Tversion {
 	struct p9fs_msg_hdr Tversion_hdr;
 	uint32_t Tversion_max_size;
 	/* Tversion_version[s] */
-};
+} __attribute__((packed));
 
 struct p9fs_msg_Rversion {
 	struct p9fs_msg_hdr Rversion_hdr;
@@ -513,6 +513,7 @@ struct p9fs_req {
 };
 TAILQ_HEAD(p9fs_req_list, p9fs_req);
 
+/* NB: This is used for in-core, not wire format. */
 struct p9fs_str {
 	uint16_t p9str_size;
 	char *p9str_str;
@@ -534,6 +535,7 @@ enum p9s_state {
 	P9S_CLOSED,
 };
 
+#define	MAXUNAMELEN	32
 struct p9fs_session {
 	enum p9s_state p9s_state;
 	struct sockaddr p9s_sockaddr;
@@ -544,6 +546,12 @@ struct p9fs_session {
 	int p9s_socktype;
 	int p9s_proto;
 	int p9s_threads;
+	char p9s_uname[MAXUNAMELEN];
+	char p9s_path[MAXPATHLEN];
+	struct p9fs_qid p9s_qid;
+	uint32_t p9s_fid;
+	uint32_t p9s_afid;
+	uint32_t p9s_uid;
 };
 
 int p9fs_client_version(struct p9fs_session *);
