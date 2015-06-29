@@ -92,8 +92,11 @@ retry:
 		goto retry;
 
 	if (m != NULL) {
-		struct p9fs_msg_Rversion *Rversion = p9fs_msg_get(m, 0);
 		struct p9fs_str p9str;
+
+		error = p9fs_client_error(&m, Rversion);
+		if (error != 0)
+			return (error);
 
 		p9fs_msg_get_str(m, sizeof (struct p9fs_msg_Rversion), &p9str);
 		if (strncmp(p9str.p9str_str, UN_VERS, p9str.p9str_size) != 0) {
@@ -169,11 +172,39 @@ p9fs_client_clunk(void)
  *
  ********
  *
+ * This is primarily used by other functions as a means of checking for
+ * error conditions, so it also checks whether the expected R command is
+ * being transmitted.
+ *
+ * Return codes:
+ * >0: Error return from the server.  May be EINVAL if the wrong R command
+ *     was returned.
+ *  0: No error; the expected R command was returned.
+ *
+ * NB: m is consumed if an error is returned, regardless of type.
  */
 int
-p9fs_client_error(void)
+p9fs_client_error(void **mp, enum p9fs_msg_type expected_type)
 {
-	return (EINVAL);
+	void *m = *mp;
+	struct p9fs_msg_hdr *hdr = p9fs_msg_get(m, 0);
+	int errcode = EINVAL;
+
+	if (hdr->hdr_type == expected_type)
+		return (0);
+
+	if (hdr->hdr_type == Rerror) {
+		size_t off = sizeof (struct p9fs_msg_hdr);
+		struct p9fs_str p9str;
+		uint32_t errcode;
+
+		p9fs_msg_get_str(m, off, &p9str);
+		off += sizeof (p9str.p9str_size);
+		errcode = *(uint32_t *)p9fs_msg_get(m, off + p9str.p9str_size);
+	}
+	p9fs_msg_destroy(m);
+	*mp = NULL;
+	return (errcode);
 }
 
 /*

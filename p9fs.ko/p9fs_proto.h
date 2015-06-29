@@ -550,7 +550,7 @@ int p9fs_client_version(struct p9fs_session *);
 int p9fs_client_auth(struct p9fs_session *);
 int p9fs_client_attach(struct p9fs_session *);
 int p9fs_client_clunk(void);
-int p9fs_client_error(void);
+int p9fs_client_error(void **, enum p9fs_msg_type);
 int p9fs_client_flush(void);
 int p9fs_client_open(void);
 int p9fs_client_create(void);
