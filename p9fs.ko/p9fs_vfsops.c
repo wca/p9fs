@@ -118,7 +118,6 @@ p9fs_mount_parse_opts(struct mount *mp)
 		error = ENAMETOOLONG;
 		goto out;
 	}
-	printf("%s: hostname='%s'\n", __func__, p9mp->p9_hostname);
 
 	ret = vfs_getopt(mp->mnt_optnew, "path", (void **)&opt, NULL);
 	if (ret != 0) {
@@ -237,24 +236,6 @@ out:
 	return (error);
 }
 
-static int
-p9fs_negotiate(struct p9fsmount *p9mp)
-{
-	int error;
-	struct p9fs_session *p9s = &p9mp->p9_session;
-
-	error = p9fs_client_version(p9s);
-	printf("p9fs_client_version ret=%d\n", error);
-	if (error == 0) {
-		error = p9fs_client_attach(p9s);
-		printf("p9fs_client_attach ret=%d\n", error);
-	}
-	if (error == 0)
-		p9s->p9s_state = P9S_RUNNING;
-
-	return (error);
-}
-
 static void
 p9fs_mount_alloc(struct p9fsmount **p9mpp, struct mount *mp)
 {
@@ -267,7 +248,6 @@ p9fs_mount_alloc(struct p9fsmount **p9mpp, struct mount *mp)
 	p9s = &(*p9mpp)->p9_session;
 	mtx_init(&p9s->p9s_lock, "p9s->p9s_lock", NULL, MTX_DEF);
 	TAILQ_INIT(&p9s->p9s_recv.p9r_reqs);
-	(void) snprintf(p9s->p9s_uname, sizeof (p9s->p9s_uname), "root");
 	p9s->p9s_uid = 0;
 	p9s->p9s_fid = NOFID;
 	p9s->p9s_afid = NOFID;
@@ -360,13 +340,15 @@ p9fs_mount(struct mount *mp)
 
 	error = p9fs_connect(mp);
 	if (error != 0) {
-		printf("p9fs_connect error=%d\n", error);
 		goto out;
 	}
 
-	error = p9fs_negotiate(p9mp);
-	if (error != 0)
-		goto out;
+	/* Negotiate with the remote service.  XXX: Add auth call. */
+	error = p9fs_client_version(&p9mp->p9_session);
+	if (error == 0)
+		error = p9fs_client_attach(&p9mp->p9_session);
+	if (error == 0)
+		p9mp->p9_session.p9s_state = P9S_RUNNING;
 
 out:
 	if (error != 0)

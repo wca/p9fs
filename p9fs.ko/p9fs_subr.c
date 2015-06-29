@@ -101,7 +101,6 @@ p9fs_msg_add_string(void *mp, const char *str, uint16_t len)
 {
 	struct mbuf *m = mp;
 
-	printf("%s(%s, len=%d)\n", __func__, str, len);
 	if (m_append(m, 2, (uint8_t *)&len) == 0)
 		return (EINVAL);
 	if (m_append(m, len, str) == 0)
@@ -143,7 +142,6 @@ p9fs_msg_send(struct p9fs_session *p9s, void **mp)
 		*mp = NULL;
 		return (ECONNABORTED);
 	}
-	printf("%s: inserting request for tag %d\n", __func__, tag);
 	p9s->p9s_threads++;
 	TAILQ_INSERT_TAIL(&p9r->p9r_reqs, req, req_link);
 	mtx_unlock(&p9s->p9s_lock);
@@ -166,10 +164,8 @@ p9fs_msg_send(struct p9fs_session *p9s, void **mp)
 	if (req->req_error != 0 && error == 0)
 		error = req->req_error;
 
-	if (error == 0 && req->req_msg == NULL) {
-		printf("%s: waiting on tag %d\n", __func__, tag);
+	if (error == 0 && req->req_msg == NULL)
 		error = msleep(req, &p9s->p9s_lock, PCATCH, "p9reqsend", timo);
-	}
 
 	TAILQ_REMOVE(&p9r->p9r_reqs, req, req_link);
 	if (error == 0)
@@ -218,7 +214,6 @@ again:
 	/* Drop the sockbuf lock and do the soreceive call. */
 	SOCKBUF_UNLOCK(&p9s->p9s_sock->so_rcv);
 	rcvflag = MSG_DONTWAIT | MSG_SOCALLBCK;
-	printf("%s: soreceive(%ld bytes)\n", __func__, uio.uio_resid);
 	error = soreceive(p9s->p9s_sock, psa, &uio, &m, &control, &rcvflag);
 	SOCKBUF_LOCK(&p9s->p9s_sock->so_rcv);
 
@@ -250,7 +245,6 @@ again:
 		}
 		p9r->p9r_resid = p9r->p9r_size - sizeof (p9r->p9r_size);
 		p9r->p9r_msg = m;
-		printf("%s: resid=%d\n", __func__, p9r->p9r_resid);
 
 		/* Record size is known now; retrieve the rest. */
 		goto again;
@@ -261,7 +255,6 @@ again:
 
 	/* If we have a complete record, match it to a request via tag. */
 	p9r->p9r_resid = uio.uio_resid;
-	printf("%s: resid %d\n", __func__, p9r->p9r_resid);
 	if (p9r->p9r_resid == 0) {
 		int found = 0;
 		uint16_t tag;
@@ -273,8 +266,6 @@ again:
 		mtx_lock(&p9s->p9s_lock);
 		TAILQ_FOREACH(req, &p9r->p9r_reqs, req_link) {
 			if (req->req_tag == tag) {
-				printf("%s: found %p for tag %d\n",
-				    __func__, p9r->p9r_msg, tag);
 				found = 1;
 				req->req_msg = m_pullup(p9r->p9r_msg,
 				    p9r->p9r_size);
@@ -286,7 +277,6 @@ again:
 		}
 		mtx_unlock(&p9s->p9s_lock);
 		if (found == 0) {
-			printf("%s: tag %d not found\n", __func__, tag);
 			m_freem(p9r->p9r_msg);
 		}
 		p9r->p9r_msg = NULL;

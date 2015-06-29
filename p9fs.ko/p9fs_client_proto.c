@@ -186,9 +186,6 @@ retry:
 
 		qid = p9fs_msg_get(m, sizeof (struct p9fs_msg_hdr));
 		bcopy(qid, (void *)&p9s->p9s_qid, sizeof (struct p9fs_qid));
-		printf("%s at %s: qid={%u,%u,%lu}\n", __func__,
-		    p9s->p9s_path, qid->qid_mode, qid->qid_version,
-		    qid->qid_path);
 
 		p9fs_msg_destroy(m);
 	}
