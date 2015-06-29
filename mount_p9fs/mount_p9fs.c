@@ -86,6 +86,7 @@ struct mnt_context {
 	int iovlen;
 	int socktype;
 	char errmsg[256];
+	char *path;
 };
 
 static void
@@ -183,10 +184,10 @@ parse_required_args(struct mnt_context *ctx, char **argv)
 	struct sockaddr *addr;
 
 	/* Parse pathspec */
-	path = strchr(argv[0], ':');
-	if (path == NULL)
+	ctx->path = strchr(argv[0], ':');
+	if (ctx->path == NULL)
 		usage(1, "Pathspec does not follow host:path format");
-	*path++ = '\0';
+	*ctx->path++ = '\0';
 
 	hints.ai_flags = AI_NUMERICHOST;
 	hints.ai_socktype = ctx->socktype == 0 ? SOCK_STREAM : ctx->socktype;
@@ -213,16 +214,15 @@ parse_required_args(struct mnt_context *ctx, char **argv)
 	build_iovec(&ctx->iov, &ctx->iovlen, "fstype", "p9fs", (size_t)-1);
 	build_iovec(&ctx->iov, &ctx->iovlen, "hostname", argv[0], (size_t)-1);
 	build_iovec(&ctx->iov, &ctx->iovlen, "fspath", argv[1], (size_t)-1);
-	build_iovec(&ctx->iov, &ctx->iovlen, "path", path, (size_t)-1);
+	build_iovec(&ctx->iov, &ctx->iovlen, "path", ctx->path, (size_t)-1);
 	build_iovec(&ctx->iov, &ctx->iovlen, "errmsg", ctx->errmsg,
 	    sizeof (ctx->errmsg));
-	*(path - 1) = ':';
 }
 
 int
 main(int argc, char **argv)
 {
-	int ch, error;
+	int ch;
 	struct mnt_context ctx = { 0 };
 	const char *optstr = "o:";
 
@@ -243,22 +243,20 @@ main(int argc, char **argv)
 		usage(1, "Must specify required arguments");
 
 	parse_required_args(&ctx, argv);
-#if 0
 	if (modfind("p9fs") < 0) {
 		if (kldload("p9fs") < 0)
 			err(1, "p9fs could not be loaded in the kernel");
 		if (modfind("p9fs") < 0)
 			err(1, "p9fs is not in the kernel");
 	}
-#endif
 
 	if (nmount(ctx.iov, ctx.iovlen, 0) == -1) {
 		if (ctx.errmsg[0] != '\0')
-			errx(1, "Mounting %s at %s: %s",
-			    argv[0], argv[1], ctx.errmsg);
+			errx(1, "Mounting %s:%s at %s: %s",
+			    argv[0], ctx.path, argv[1], ctx.errmsg);
 		else
 			err(1, "Mounting %s at %s", argv[0], argv[1]);
 	}
 
-	return (error);
+	return (0);
 }
