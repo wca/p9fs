@@ -340,6 +340,29 @@ p9fs_client_remove(void)
 	return (EINVAL);
 }
 
+/* Parse the 9P2000-only portion of Rstat from the message. */
+static void
+p9fs_client_parse_std_stat(void *m, struct p9fs_stat_payload *pay, size_t *off)
+{
+	*off = sizeof (struct p9fs_msg_hdr);
+
+	pay->pay_stat = p9fs_msg_get(m, *off);
+
+	*off += sizeof (struct p9fs_stat);
+	p9fs_msg_get_str(m, *off, &pay->pay_name);
+
+	*off += sizeof (uint16_t) + pay->pay_name.p9str_size;
+	p9fs_msg_get_str(m, *off, &pay->pay_uid);
+
+	*off += sizeof (uint16_t) + pay->pay_uid.p9str_size;
+	p9fs_msg_get_str(m, *off, &pay->pay_gid);
+
+	*off += sizeof (uint16_t) + pay->pay_gid.p9str_size;
+	p9fs_msg_get_str(m, *off, &pay->pay_muid);
+
+	*off += sizeof (uint16_t) + pay->pay_muid.p9str_size;
+}
+
 /*
  * stat, wstat - inquire or change file attributes
  *
@@ -350,14 +373,72 @@ p9fs_client_remove(void)
  *   size[4] Rwstat tag[2]
  *
  ******** PROTOCOL NOTES
- *
+ * Tfid[4]: Fid to perform the stat call on.
  ********
  *
+ * This function is used for both VOP_GETATTR(9) and VOP_READDIR(9), which
+ * have very different output requirements.  As such, its primary job is to
+ * perform the stat call and parse the response payload.
+ *
+ * For each Rstat[n] entry returned, cb will be called with pointers to:
+ * - struct p9fs_stat, for the main body of the stat response
+ * - struct p9fs_str pointers, for the name/uid/gid/muid/extension strings.
+ * - struct p9fs_stat_u_footer, for the tail of the 9P2000.u stat response.
+ *
+ * In order to parse the entire payload, each of these must be teased from
+ * the payload in turn, until the payload is exhausted.
+ *
+ * If cb returns non-zero, parsing will end immediately and the error return
+ * will be forwarded to the caller.
  */
 int
-p9fs_client_stat(void)
+p9fs_client_stat(struct p9fs_session *p9s, uint32_t fid, Rstat_callback cb,
+    void *cbarg)
 {
-	return (EINVAL);
+	void *m;
+	int error = 0;
+
+retry:
+	m = p9fs_msg_create(Tstat, 0);
+	if (m == NULL)
+		return (ENOBUFS);
+
+	if (error == 0) /* fid[4] */
+		error = p9fs_msg_add(m, sizeof (uint32_t), &fid);
+	if (error != 0) {
+		p9fs_msg_destroy(m);
+		return (error);
+	}
+
+	error = p9fs_msg_send(p9s, &m);
+	if (error == EMSGSIZE)
+		goto retry;
+
+	if (m != NULL) {
+		int32_t len = p9fs_msg_payload_len(m);
+		size_t off = 0;
+		struct p9fs_stat_u_payload upay = {};
+
+		error = p9fs_client_error(&m, Rstat);
+		if (error != 0)
+			return (error);
+
+		while (error == 0 && len > off) {
+			struct p9fs_stat_payload *pay = &upay.upay_std;
+
+			p9fs_client_parse_std_stat(m, pay, &off);
+			p9fs_msg_get_str(m, off, &upay.upay_extension);
+
+			off += sizeof (uint16_t) + upay.upay_extension.p9str_size;
+			upay.upay_footer = p9fs_msg_get(m, off);
+			off += sizeof (upay.upay_footer);
+
+			error = cb(&upay, cbarg);
+		}
+		p9fs_msg_destroy(m);
+	}
+
+	return (error);
 }
 
 int
@@ -373,12 +454,18 @@ p9fs_client_wstat(void)
  *   size[4] Rwalk tag[2] nwqid[2] nwqid*(qid[13])
  *
  ******** PROTOCOL NOTES
- *
+ * Tfid[4] must be a fid for a directory
+ * Tnewfid[4] is the proposed fid for the thing being walked to.
+ * Tnwname[2] is the number of things to walk down; newfid is for the last.
+ * T*wname[s] are the names of those things.
  ********
  *
+ * For the purposes of p9fs, this call will only ever be used for a single
+ * walk at a time, due to the nature of POSIX VFS.
  */
 int
-p9fs_client_walk(void)
+p9fs_client_walk(struct p9fs_session *p9s, uint32_t fid, uint32_t *newfid,
+    size_t namelen, const char *namestr)
 {
 	return (EINVAL);
 }

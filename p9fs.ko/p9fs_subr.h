@@ -40,5 +40,6 @@ void p9fs_msg_recv(struct p9fs_session *);
 void *p9fs_msg_get(void *, size_t);
 void p9fs_msg_get_str(void *, size_t, struct p9fs_str *);
 void p9fs_msg_destroy(void *);
+int32_t p9fs_msg_payload_len(void *);
 
 #endif

@@ -302,6 +302,12 @@ p9fs_msg_get_str(void *mp, size_t off, struct p9fs_str *str)
 	str->p9str_str = (char *)(buf + sizeof (str->p9str_size));
 }
 
+int32_t
+p9fs_msg_payload_len(void *mp)
+{
+	return (((struct mbuf *)mp)->m_len);
+}
+
 void
 p9fs_msg_destroy(void *mp)
 {

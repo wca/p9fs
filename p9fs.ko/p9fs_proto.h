@@ -297,6 +297,19 @@ struct p9fs_stat {
 	/* stat_muid[s] */
 } __attribute__((packed));
 
+/* This is the stat addendum for 9P2000.u vs 9P2000 */
+struct p9fs_stat_u {
+	struct p9fs_stat u_stat;
+	/* extension[s] */
+	/* p9fs_stat_u_footer */
+} __attribute__((packed));
+
+struct p9fs_stat_u_footer {
+	uint32_t n_uid;
+	uint32_t n_gid;
+	uint32_t n_muid;
+} __attribute__((packed));
+
 /*
  * Basic structures for 9P2000 message types.
  *
@@ -519,6 +532,20 @@ struct p9fs_str {
 	char *p9str_str;
 };
 
+/* Payload structures passed to requesters via callback.  In-core only. */
+struct p9fs_stat_payload {
+	struct p9fs_stat *pay_stat;
+	struct p9fs_str pay_name;
+	struct p9fs_str pay_uid;
+	struct p9fs_str pay_gid;
+	struct p9fs_str pay_muid;
+};
+struct p9fs_stat_u_payload {
+	struct p9fs_stat_payload upay_std;
+	struct p9fs_str upay_extension;
+	struct p9fs_stat_u_footer *upay_footer;
+};
+
 struct p9fs_recv {
 	uint32_t p9r_resid;
 	uint32_t p9r_size;
@@ -554,6 +581,8 @@ struct p9fs_session {
 	uint32_t p9s_uid;
 };
 
+typedef int (*Rstat_callback)(struct p9fs_stat_u_payload *, void *);
+
 int p9fs_client_version(struct p9fs_session *);
 int p9fs_client_auth(struct p9fs_session *);
 int p9fs_client_attach(struct p9fs_session *);
@@ -565,8 +594,9 @@ int p9fs_client_create(void);
 int p9fs_client_read(void);
 int p9fs_client_write(void);
 int p9fs_client_remove(void);
-int p9fs_client_stat(void);
+int p9fs_client_stat(struct p9fs_session *, uint32_t, Rstat_callback, void *);
 int p9fs_client_wstat(void);
-int p9fs_client_walk(void);
+int p9fs_client_walk(struct p9fs_session *, uint32_t, uint32_t *, size_t,
+    const char *);
 
 #endif /* __P9FS_PROTO_H__ */
