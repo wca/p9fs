@@ -44,6 +44,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/socketvar.h>
 #include <sys/systm.h>
 #include <sys/mbuf.h>
+#include <sys/fcntl.h>
 
 #include "p9fs_proto.h"
 #include "p9fs_subr.h"
@@ -280,18 +281,65 @@ p9fs_client_flush(void)
  *   size[4] Topen tag[2] fid[4] mode[1]
  *   size[4] Ropen tag[2] qid[13] iounit[4]
  *
- *   size[4] Tcreate tag[2] fid[4] name[s] perm[4] mode[1]
+ *   size[4] Tcreate tag[2] fid[4] name[s] perm[4] mode[1] extension[s]
  *   size[4] Rcreate tag[2] qid[13] iounit[4]
  *
  ******** PROTOCOL NOTES
- *
+ * Topen fid[4]: Existing fid opened via Twalk.
+ * Tcreate fid[4]: ???
  ********
  *
  */
 int
-p9fs_client_open(void)
+p9fs_client_open(struct p9fs_session *p9s, uint32_t fid, int mode)
 {
-	return (EINVAL);
+	void *m;
+	int error = 0;
+	uint8_t mode1;
+
+retry:
+	m = p9fs_msg_create(Topen, 0);
+	if (m == NULL)
+		return (ENOBUFS);
+
+	/* Convert VOP_OPEN() mode to 9P2000 mode[1]. */
+	if ((mode & (FREAD|FWRITE)) == (FREAD|FWRITE))
+		mode1 = ORDWR;
+	else if (mode & FREAD)
+		mode1 = OREAD;
+	else if (mode & FWRITE)
+		mode1 = OWRITE;
+	if (mode & O_TRUNC)
+		mode1 |= OTRUNC;
+	/* There is no POSIX mode correlating to ORCLOSE. */
+
+	if (error == 0)
+		error = p9fs_msg_add(m, sizeof (uint32_t), &fid);
+	if (error == 0)
+		error = p9fs_msg_add(m, sizeof (uint8_t), &mode1);
+	if (error != 0) {
+		p9fs_msg_destroy(m);
+		return (error);
+	}
+
+	error = p9fs_msg_send(p9s, &m);
+	if (error == EMSGSIZE)
+		goto retry;
+
+	if (m != NULL) {
+		size_t off = sizeof (struct p9fs_msg_hdr);
+		struct p9fs_qid *qid;
+
+		error = p9fs_client_error(&m, Ropen);
+		if (error != 0)
+			return (error);
+
+		p9fs_msg_get(m, &off, (void *)&qid, sizeof (struct p9fs_qid));
+		/* XXX Put qid in vnode private space? */
+		p9fs_msg_destroy(m);
+	}
+
+	return (error);
 }
 
 int
@@ -453,10 +501,60 @@ p9fs_client_wstat(void)
  *
  * For the purposes of p9fs, this call will only ever be used for a single
  * walk at a time, due to the nature of POSIX VFS.
+ *
+ * Note that this call is used to open files in addition to directories.
  */
 int
 p9fs_client_walk(struct p9fs_session *p9s, uint32_t fid, uint32_t *newfid,
     size_t namelen, const char *namestr)
 {
-	return (EINVAL);
+	void *m;
+	int error = 0;
+	uint16_t nwname = 1;
+
+retry:
+	m = p9fs_msg_create(Twalk, 0);
+	if (m == NULL)
+		return (ENOBUFS);
+
+	if (error == 0) /* fid[4] */
+		error = p9fs_msg_add(m, sizeof (fid), &fid);
+	if (error == 0) /* newfid[4] */
+		error = p9fs_msg_add(m, sizeof (*newfid), newfid);
+	if (error == 0) /* nwname[2] */
+		error = p9fs_msg_add(m, sizeof (uint16_t), &nwname);
+	if (error == 0) /* the sole wname[s] */
+		error = p9fs_msg_add_string(m, namestr, namelen);
+	if (error != 0) {
+		p9fs_msg_destroy(m);
+		return (error);
+	}
+
+	error = p9fs_msg_send(p9s, &m);
+	if (error == EMSGSIZE)
+		goto retry;
+
+	if (m != NULL) {
+		size_t off = sizeof (struct p9fs_msg_hdr);
+		uint16_t *nwqid;
+		struct p9fs_qid *qid;
+
+		error = p9fs_client_error(&m, Rwalk);
+		if (error != 0)
+			return (error);
+
+		p9fs_msg_get(m, &off, (void *)&nwqid, sizeof (*nwqid));
+		if (*nwqid != 1) {
+			/* XXX: How could this scenario occur? */
+			error = ENOENT;
+		}
+		if (error == 0) {
+			p9fs_msg_get(m, &off, (void *)&qid,
+			    sizeof (struct p9fs_qid));
+			/* XXX Copy qid to vnode? */
+		}
+		p9fs_msg_destroy(m);
+	}
+
+	return (error);
 }

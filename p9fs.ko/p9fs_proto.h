@@ -514,6 +514,12 @@ union p9fs_msg {
 #define	UN_VERS		P9_VERS ".u"
 #define	P9_MSG_MAX	MAXPHYS + sizeof (struct p9fs_msg_hdr)
 
+#define	OREAD	0
+#define	OWRITE	1
+#define	ORDWR	2
+#define	OEXEC	3
+#define	OTRUNC	0x10
+
 /**************************************************************************
  * Plan9 session details section
  **************************************************************************/
@@ -589,7 +595,7 @@ int p9fs_client_attach(struct p9fs_session *);
 int p9fs_client_clunk(void);
 int p9fs_client_error(void **, enum p9fs_msg_type);
 int p9fs_client_flush(void);
-int p9fs_client_open(void);
+int p9fs_client_open(struct p9fs_session *, uint32_t, int);
 int p9fs_client_create(void);
 int p9fs_client_read(void);
 int p9fs_client_write(void);
