@@ -287,19 +287,22 @@ out:
 	return;
 }
 
-void *
-p9fs_msg_get(void *mp, size_t off)
+void
+p9fs_msg_get(void *mp, size_t *offp, void **ptr, size_t data_sz)
 {
-	return (mtod((struct mbuf *)mp, uint8_t *) + off);
+	*ptr = mtod((struct mbuf *)mp, uint8_t *) + *offp;
+	*offp += data_sz;
 }
 
 void
-p9fs_msg_get_str(void *mp, size_t off, struct p9fs_str *str)
+p9fs_msg_get_str(void *mp, size_t *offp, struct p9fs_str *str)
 {
-	uint8_t *buf = p9fs_msg_get(mp, off);
+	uint8_t *buf;
 
+	p9fs_msg_get(mp, offp, (void **)&buf, sizeof (uint16_t));
 	str->p9str_size = *(uint16_t *)buf;
 	str->p9str_str = (char *)(buf + sizeof (str->p9str_size));
+	*offp += str->p9str_size;
 }
 
 int32_t

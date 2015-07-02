@@ -94,12 +94,14 @@ retry:
 
 	if (m != NULL) {
 		struct p9fs_str p9str;
+		size_t off;
 
 		error = p9fs_client_error(&m, Rversion);
 		if (error != 0)
 			return (error);
 
-		p9fs_msg_get_str(m, sizeof (struct p9fs_msg_Rversion), &p9str);
+		off = sizeof (struct p9fs_msg_Rversion);
+		p9fs_msg_get_str(m, &off, &p9str);
 		if (strncmp(p9str.p9str_str, UN_VERS, p9str.p9str_size) != 0) {
 			printf("Remote offered incompatible version '%.*s'\n",
 			    p9str.p9str_size, p9str.p9str_str);
@@ -178,15 +180,15 @@ retry:
 		goto retry;
 
 	if (m != NULL) {
+		size_t off = sizeof (struct p9fs_msg_hdr);
 		struct p9fs_qid *qid;
 
 		error = p9fs_client_error(&m, Rattach);
 		if (error != 0)
 			return (error);
 
-		qid = p9fs_msg_get(m, sizeof (struct p9fs_msg_hdr));
-		bcopy(qid, (void *)&p9s->p9s_qid, sizeof (struct p9fs_qid));
-
+		p9fs_msg_get(m, &off, (void *)&qid, sizeof (struct p9fs_qid));
+		bcopy(qid, &p9s->p9s_qid, sizeof (struct p9fs_qid));
 		p9fs_msg_destroy(m);
 	}
 
@@ -234,20 +236,21 @@ int
 p9fs_client_error(void **mp, enum p9fs_msg_type expected_type)
 {
 	void *m = *mp;
-	struct p9fs_msg_hdr *hdr = p9fs_msg_get(m, 0);
+	size_t off = 0;
+	struct p9fs_msg_hdr *hdr;
 	int errcode = EINVAL;
 
+	p9fs_msg_get(m, &off, (void **)&hdr, sizeof (*hdr));
 	if (hdr->hdr_type == expected_type)
 		return (0);
 
 	if (hdr->hdr_type == Rerror) {
-		size_t off = sizeof (struct p9fs_msg_hdr);
 		struct p9fs_str p9str;
-		uint32_t errcode;
+		uint32_t *proto_err;
 
-		p9fs_msg_get_str(m, off, &p9str);
-		off += sizeof (p9str.p9str_size);
-		errcode = *(uint32_t *)p9fs_msg_get(m, off + p9str.p9str_size);
+		p9fs_msg_get_str(m, &off, &p9str);
+		p9fs_msg_get(m, &off, (void *)&proto_err, sizeof (*proto_err));
+		errcode = *proto_err;
 	}
 	p9fs_msg_destroy(m);
 	*mp = NULL;
@@ -342,25 +345,15 @@ p9fs_client_remove(void)
 
 /* Parse the 9P2000-only portion of Rstat from the message. */
 static void
-p9fs_client_parse_std_stat(void *m, struct p9fs_stat_payload *pay, size_t *off)
+p9fs_client_parse_std_stat(void *m, struct p9fs_stat_payload *pay, size_t *offp)
 {
-	*off = sizeof (struct p9fs_msg_hdr);
+	*offp = sizeof (struct p9fs_msg_hdr);
 
-	pay->pay_stat = p9fs_msg_get(m, *off);
-
-	*off += sizeof (struct p9fs_stat);
-	p9fs_msg_get_str(m, *off, &pay->pay_name);
-
-	*off += sizeof (uint16_t) + pay->pay_name.p9str_size;
-	p9fs_msg_get_str(m, *off, &pay->pay_uid);
-
-	*off += sizeof (uint16_t) + pay->pay_uid.p9str_size;
-	p9fs_msg_get_str(m, *off, &pay->pay_gid);
-
-	*off += sizeof (uint16_t) + pay->pay_gid.p9str_size;
-	p9fs_msg_get_str(m, *off, &pay->pay_muid);
-
-	*off += sizeof (uint16_t) + pay->pay_muid.p9str_size;
+	p9fs_msg_get(m, offp, (void **)&pay->pay_stat, sizeof (*pay->pay_stat));
+	p9fs_msg_get_str(m, offp, &pay->pay_name);
+	p9fs_msg_get_str(m, offp, &pay->pay_uid);
+	p9fs_msg_get_str(m, offp, &pay->pay_gid);
+	p9fs_msg_get_str(m, offp, &pay->pay_muid);
 }
 
 /*
@@ -427,11 +420,9 @@ retry:
 			struct p9fs_stat_payload *pay = &upay.upay_std;
 
 			p9fs_client_parse_std_stat(m, pay, &off);
-			p9fs_msg_get_str(m, off, &upay.upay_extension);
-
-			off += sizeof (uint16_t) + upay.upay_extension.p9str_size;
-			upay.upay_footer = p9fs_msg_get(m, off);
-			off += sizeof (upay.upay_footer);
+			p9fs_msg_get_str(m, &off, &upay.upay_extension);
+			p9fs_msg_get(m, &off, (void **)&upay.upay_footer,
+			    sizeof (upay.upay_footer));
 
 			error = cb(&upay, cbarg);
 		}
