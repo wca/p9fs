@@ -248,6 +248,7 @@ p9fs_mount_alloc(struct p9fsmount **p9mpp, struct mount *mp)
 	p9s = &(*p9mpp)->p9_session;
 	mtx_init(&p9s->p9s_lock, "p9s->p9s_lock", NULL, MTX_DEF);
 	TAILQ_INIT(&p9s->p9s_recv.p9r_reqs);
+	(void) strlcpy(p9s->p9s_uname, "root", sizeof ("root"));
 	p9s->p9s_uid = 0;
 	p9s->p9s_fid = NOFID;
 	p9s->p9s_afid = NOFID;
