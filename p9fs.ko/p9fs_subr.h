@@ -39,7 +39,13 @@ int p9fs_msg_send(struct p9fs_session *, void **);
 void p9fs_msg_recv(struct p9fs_session *);
 void p9fs_msg_get(void *, size_t *, void **, size_t);
 void p9fs_msg_get_str(void *, size_t *, struct p9fs_str *);
-void p9fs_msg_destroy(void *);
+void p9fs_msg_destroy(struct p9fs_session *, void *);
 int32_t p9fs_msg_payload_len(void *);
+void p9fs_init_session(struct p9fs_session *);
+void p9fs_close_session(struct p9fs_session *);
+uint32_t p9fs_getfid(struct p9fs_session *);
+void p9fs_relfid(struct p9fs_session *, uint32_t);
+uint16_t p9fs_gettag(struct p9fs_session *);
+void p9fs_reltag(struct p9fs_session *, uint16_t);
 
 #endif

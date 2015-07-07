@@ -44,6 +44,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/uio.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
+#include <sys/mount.h>
+#include <netinet/in.h>
+#include <sys/limits.h>
 
 #include "p9fs_proto.h"
 #include "p9fs_subr.h"
@@ -137,9 +140,9 @@ p9fs_msg_send(struct p9fs_session *p9s, void **mp)
 	mtx_lock(&p9s->p9s_lock);
 	if (p9s->p9s_state >= P9S_CLOSING) {
 		mtx_unlock(&p9s->p9s_lock);
-		free(req, M_P9REQ);
-		m_freem(m);
 		*mp = NULL;
+		p9fs_msg_destroy(p9s, m);
+		free(req, M_P9REQ);
 		return (ECONNABORTED);
 	}
 	p9s->p9s_threads++;
@@ -312,9 +315,92 @@ p9fs_msg_payload_len(void *mp)
 }
 
 void
-p9fs_msg_destroy(void *mp)
+p9fs_msg_destroy(struct p9fs_session *p9s, void *mp)
 {
 	struct mbuf *m = mp;
+	uint16_t *tag;
+	size_t off = offsetof(struct p9fs_msg_hdr, hdr_tag);
 
+	p9fs_msg_get(mp, &off, (void **)&tag, sizeof (*tag));
+	if (*tag != NOTAG)
+		p9fs_reltag(p9s, *tag);
 	m_freem(m);
+}
+
+void
+p9fs_init_session(struct p9fs_session *p9s)
+{
+	mtx_init(&p9s->p9s_lock, "p9s->p9s_lock", NULL, MTX_DEF);
+	TAILQ_INIT(&p9s->p9s_recv.p9r_reqs);
+	(void) strlcpy(p9s->p9s_uname, "root", sizeof ("root"));
+	p9s->p9s_uid = 0;
+	p9s->p9s_afid = NOFID;
+	/*
+	 * XXX Although there can be more FIDs, the unit accounting subroutines
+	 *     flatten these values to int arguments rather than u_int.
+	 *     This will limit the number of outstanding vnodes for a p9fs
+	 *     mount to 64k.
+	 */
+	p9s->p9s_fids = new_unrhdr(1, UINT16_MAX, &p9s->p9s_lock);
+	p9s->p9s_tags = new_unrhdr(1, UINT16_MAX - 1, &p9s->p9s_lock);
+	p9s->p9s_socktype = SOCK_STREAM;
+	p9s->p9s_proto = IPPROTO_TCP;
+}
+
+void
+p9fs_close_session(struct p9fs_session *p9s)
+{
+	mtx_lock(&p9s->p9s_lock);
+	if (p9s->p9s_sock != NULL) {
+		struct p9fs_recv *p9r = &p9s->p9s_recv;
+		struct sockbuf *rcv = &p9s->p9s_sock->so_rcv;
+
+		p9s->p9s_state = P9S_CLOSING;
+		mtx_unlock(&p9s->p9s_lock);
+
+		SOCKBUF_LOCK(rcv);
+		soupcall_clear(p9s->p9s_sock, SO_RCV);
+		while (p9r->p9r_soupcalls > 0)
+			(void) msleep(&p9r->p9r_soupcalls, SOCKBUF_MTX(rcv),
+			    0, "p9rcvup", 0);
+		SOCKBUF_UNLOCK(rcv);
+		(void) soclose(p9s->p9s_sock);
+
+		/*
+		 * XXX Can there really be any such threads?  If vflush()
+		 *     has completed, there shouldn't be.  See if we can
+		 *     remove this and related code later.
+		 */
+		mtx_lock(&p9s->p9s_lock);
+		while (p9s->p9s_threads > 0)
+			msleep(p9s, &p9s->p9s_lock, 0, "p9sclose", 0);
+		p9s->p9s_state = P9S_CLOSED;
+	}
+	mtx_unlock(&p9s->p9s_lock);
+
+	/* Would like to explicitly clunk ROOTFID here, but soupcall gone. */
+	delete_unrhdr(p9s->p9s_fids);
+	delete_unrhdr(p9s->p9s_tags);
+}
+
+/* FID & tag management.  Makes use of subr_unit, since it's the best fit. */
+uint32_t
+p9fs_getfid(struct p9fs_session *p9s)
+{
+	return (alloc_unr(p9s->p9s_fids));
+}
+void
+p9fs_relfid(struct p9fs_session *p9s, uint32_t fid)
+{
+	free_unr(p9s->p9s_fids, fid);
+}
+uint16_t
+p9fs_gettag(struct p9fs_session *p9s)
+{
+	return (alloc_unr(p9s->p9s_tags));
+}
+void
+p9fs_reltag(struct p9fs_session *p9s, uint16_t tag)
+{
+	free_unr(p9s->p9s_tags, tag);
 }

@@ -509,6 +509,8 @@ union p9fs_msg {
 
 #define	NOTAG		(unsigned short)~0
 #define	NOFID		(uint32_t)~0
+/* This FID is not specified by the standard, but implemented here as such. */
+#define	ROOTFID		(uint32_t)0
 
 #define	P9_VERS		"9P2000"
 #define	UN_VERS		P9_VERS ".u"
@@ -568,6 +570,16 @@ enum p9s_state {
 	P9S_CLOSED,
 };
 
+struct p9fs_session;
+
+/* A Plan9 node. */
+struct p9fs_node {
+	uint32_t p9n_fid;
+	struct p9fs_qid p9n_qid;
+	struct vnode *p9n_vnode;
+	struct p9fs_session *p9n_session;
+};
+
 #define	MAXUNAMELEN	32
 struct p9fs_session {
 	enum p9s_state p9s_state;
@@ -579,21 +591,27 @@ struct p9fs_session {
 	int p9s_socktype;
 	int p9s_proto;
 	int p9s_threads;
-	char p9s_uname[MAXUNAMELEN];
-	char p9s_path[MAXPATHLEN];
-	struct p9fs_qid p9s_qid;
-	uint32_t p9s_fid;
-	uint32_t p9s_afid;
+
 	uint32_t p9s_uid;
+	char p9s_uname[MAXUNAMELEN];
+	uint32_t p9s_afid;
+	char p9s_path[MAXPATHLEN];
+
+	struct p9fs_node p9s_rootnp;
+
+	/* Units for fids and tags; protected by p9s_lock. */
+	struct unrhdr *p9s_fids;
+	struct unrhdr *p9s_tags;
 };
 
 typedef int (*Rstat_callback)(struct p9fs_stat_u_payload *, void *);
 
+/* Primary 9P2000.u client API calls. */
 int p9fs_client_version(struct p9fs_session *);
 int p9fs_client_auth(struct p9fs_session *);
 int p9fs_client_attach(struct p9fs_session *);
-int p9fs_client_clunk(void);
-int p9fs_client_error(void **, enum p9fs_msg_type);
+int p9fs_client_clunk(struct p9fs_session *, uint32_t);
+int p9fs_client_error(struct p9fs_session *, void **, enum p9fs_msg_type);
 int p9fs_client_flush(void);
 int p9fs_client_open(struct p9fs_session *, uint32_t, int);
 int p9fs_client_create(void);
@@ -604,5 +622,14 @@ int p9fs_client_stat(struct p9fs_session *, uint32_t, Rstat_callback, void *);
 int p9fs_client_wstat(void);
 int p9fs_client_walk(struct p9fs_session *, uint32_t, uint32_t *, size_t,
     const char *);
+
+/* Wrapper API calls. */
+int p9fs_nget(struct mount *, struct p9fs_session *, uint32_t,
+    struct p9fs_qid *, int, struct p9fs_node **);
+int p9fs_client_getnode(struct p9fs_node *, char *, struct p9fs_node **);
+
+/* Helpers for managing tags and fids. */
+uint32_t p9fs_getfid(struct p9fs_session *);
+void p9fs_relfid(struct p9fs_session *, uint32_t);
 
 #endif /* __P9FS_PROTO_H__ */

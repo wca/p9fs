@@ -40,11 +40,14 @@ __FBSDID("$FreeBSD$");
 #include <sys/types.h>
 #include <sys/errno.h>
 #include <sys/param.h>
+#include <sys/malloc.h>
+#include <sys/kernel.h>
 #include <sys/socket.h>
 #include <sys/socketvar.h>
 #include <sys/systm.h>
 #include <sys/mbuf.h>
 #include <sys/fcntl.h>
+#include <sys/mount.h>
 
 #include "p9fs_proto.h"
 #include "p9fs_subr.h"
@@ -85,7 +88,7 @@ retry:
 	if (error == 0) /* version[s] */
 		error = p9fs_msg_add_string(m, UN_VERS, strlen(UN_VERS));
 	if (error != 0) {
-		p9fs_msg_destroy(m);
+		p9fs_msg_destroy(p9s, m);
 		return (error);
 	}
 
@@ -97,7 +100,7 @@ retry:
 		struct p9fs_str p9str;
 		size_t off;
 
-		error = p9fs_client_error(&m, Rversion);
+		error = p9fs_client_error(p9s, &m, Rversion);
 		if (error != 0)
 			return (error);
 
@@ -109,7 +112,7 @@ retry:
 			error = EINVAL;
 		}
 
-		p9fs_msg_destroy(m);
+		p9fs_msg_destroy(p9s, m);
 	}
 
 	return (error);
@@ -153,14 +156,15 @@ p9fs_client_attach(struct p9fs_session *p9s)
 {
 	void *m;
 	int error = 0;
+	struct p9fs_node *np = &p9s->p9s_rootnp;
 
 retry:
-	m = p9fs_msg_create(Tattach, 0);
+	m = p9fs_msg_create(Tattach, p9fs_gettag(p9s));
 	if (m == NULL)
 		return (ENOBUFS);
 
 	if (error == 0) /* fid[4] */
-		error = p9fs_msg_add(m, sizeof (uint32_t), &p9s->p9s_fid);
+		error = p9fs_msg_add(m, sizeof (uint32_t), &np->p9n_fid);
 	if (error == 0) /* afid[4] */
 		error = p9fs_msg_add(m, sizeof (uint32_t), &p9s->p9s_afid);
 	if (error == 0) /* uname[s] */
@@ -172,7 +176,7 @@ retry:
 	if (error == 0) /* uid[4] */
 		error = p9fs_msg_add(m, sizeof (uint32_t), &p9s->p9s_uid);
 	if (error != 0) {
-		p9fs_msg_destroy(m);
+		p9fs_msg_destroy(p9s, m);
 		return (error);
 	}
 
@@ -184,13 +188,13 @@ retry:
 		size_t off = sizeof (struct p9fs_msg_hdr);
 		struct p9fs_qid *qid;
 
-		error = p9fs_client_error(&m, Rattach);
+		error = p9fs_client_error(p9s, &m, Rattach);
 		if (error != 0)
 			return (error);
 
 		p9fs_msg_get(m, &off, (void *)&qid, sizeof (struct p9fs_qid));
-		bcopy(qid, &p9s->p9s_qid, sizeof (struct p9fs_qid));
-		p9fs_msg_destroy(m);
+		bcopy(qid, &np->p9n_qid, sizeof (struct p9fs_qid));
+		p9fs_msg_destroy(p9s, m);
 	}
 
 	return (error);
@@ -208,9 +212,36 @@ retry:
  *
  */
 int
-p9fs_client_clunk(void)
+p9fs_client_clunk(struct p9fs_session *p9s, uint32_t fid)
 {
-	return (EINVAL);
+	void *m;
+	int error = 0;
+
+retry:
+	m = p9fs_msg_create(Tclunk, p9fs_gettag(p9s));
+	if (m == NULL)
+		return (ENOBUFS);
+
+	if (error == 0) /* fid[4] */
+		error = p9fs_msg_add(m, sizeof (uint32_t), &fid);
+	if (error != 0) {
+		p9fs_msg_destroy(p9s, m);
+		return (error);
+	}
+
+	error = p9fs_msg_send(p9s, &m);
+	if (error == EMSGSIZE)
+		goto retry;
+
+	if (m != NULL) {
+		error = p9fs_client_error(p9s, &m, Rclunk);
+		if (error != 0)
+			return (error);
+
+		p9fs_msg_destroy(p9s, m);
+	}
+
+	return (error);
 }
 
 /*
@@ -226,6 +257,9 @@ p9fs_client_clunk(void)
  * error conditions, so it also checks whether the expected R command is
  * being transmitted.
  *
+ * Note that in order for the caller to receive a reply message from
+ * p9fs_msg_send(), the reply must have had the correct tag to begin with.
+ *
  * Return codes:
  * >0: Error return from the server.  May be EINVAL if the wrong R command
  *     was returned.
@@ -234,7 +268,8 @@ p9fs_client_clunk(void)
  * NB: m is consumed if an error is returned, regardless of type.
  */
 int
-p9fs_client_error(void **mp, enum p9fs_msg_type expected_type)
+p9fs_client_error(struct p9fs_session *p9s, void **mp,
+    enum p9fs_msg_type expected_type)
 {
 	void *m = *mp;
 	size_t off = 0;
@@ -253,7 +288,7 @@ p9fs_client_error(void **mp, enum p9fs_msg_type expected_type)
 		p9fs_msg_get(m, &off, (void *)&proto_err, sizeof (*proto_err));
 		errcode = *proto_err;
 	}
-	p9fs_msg_destroy(m);
+	p9fs_msg_destroy(p9s, m);
 	*mp = NULL;
 	return (errcode);
 }
@@ -298,7 +333,7 @@ p9fs_client_open(struct p9fs_session *p9s, uint32_t fid, int mode)
 	uint8_t mode1;
 
 retry:
-	m = p9fs_msg_create(Topen, 0);
+	m = p9fs_msg_create(Topen, p9fs_gettag(p9s));
 	if (m == NULL)
 		return (ENOBUFS);
 
@@ -318,7 +353,7 @@ retry:
 	if (error == 0)
 		error = p9fs_msg_add(m, sizeof (uint8_t), &mode1);
 	if (error != 0) {
-		p9fs_msg_destroy(m);
+		p9fs_msg_destroy(p9s, m);
 		return (error);
 	}
 
@@ -330,13 +365,13 @@ retry:
 		size_t off = sizeof (struct p9fs_msg_hdr);
 		struct p9fs_qid *qid;
 
-		error = p9fs_client_error(&m, Ropen);
+		error = p9fs_client_error(p9s, &m, Ropen);
 		if (error != 0)
 			return (error);
 
 		p9fs_msg_get(m, &off, (void *)&qid, sizeof (struct p9fs_qid));
 		/* XXX Put qid in vnode private space? */
-		p9fs_msg_destroy(m);
+		p9fs_msg_destroy(p9s, m);
 	}
 
 	return (error);
@@ -440,14 +475,14 @@ p9fs_client_stat(struct p9fs_session *p9s, uint32_t fid, Rstat_callback cb,
 	int error = 0;
 
 retry:
-	m = p9fs_msg_create(Tstat, 0);
+	m = p9fs_msg_create(Tstat, p9fs_gettag(p9s));
 	if (m == NULL)
 		return (ENOBUFS);
 
 	if (error == 0) /* fid[4] */
 		error = p9fs_msg_add(m, sizeof (uint32_t), &fid);
 	if (error != 0) {
-		p9fs_msg_destroy(m);
+		p9fs_msg_destroy(p9s, m);
 		return (error);
 	}
 
@@ -460,7 +495,7 @@ retry:
 		size_t off = 0;
 		struct p9fs_stat_u_payload upay = {};
 
-		error = p9fs_client_error(&m, Rstat);
+		error = p9fs_client_error(p9s, &m, Rstat);
 		if (error != 0)
 			return (error);
 
@@ -474,7 +509,7 @@ retry:
 
 			error = cb(&upay, cbarg);
 		}
-		p9fs_msg_destroy(m);
+		p9fs_msg_destroy(p9s, m);
 	}
 
 	return (error);
@@ -513,7 +548,7 @@ p9fs_client_walk(struct p9fs_session *p9s, uint32_t fid, uint32_t *newfid,
 	uint16_t nwname = 1;
 
 retry:
-	m = p9fs_msg_create(Twalk, 0);
+	m = p9fs_msg_create(Twalk, p9fs_gettag(p9s));
 	if (m == NULL)
 		return (ENOBUFS);
 
@@ -526,7 +561,7 @@ retry:
 	if (error == 0) /* the sole wname[s] */
 		error = p9fs_msg_add_string(m, namestr, namelen);
 	if (error != 0) {
-		p9fs_msg_destroy(m);
+		p9fs_msg_destroy(p9s, m);
 		return (error);
 	}
 
@@ -539,7 +574,7 @@ retry:
 		uint16_t *nwqid;
 		struct p9fs_qid *qid;
 
-		error = p9fs_client_error(&m, Rwalk);
+		error = p9fs_client_error(p9s, &m, Rwalk);
 		if (error != 0)
 			return (error);
 
@@ -553,7 +588,7 @@ retry:
 			    sizeof (struct p9fs_qid));
 			/* XXX Copy qid to vnode? */
 		}
-		p9fs_msg_destroy(m);
+		p9fs_msg_destroy(p9s, m);
 	}
 
 	return (error);

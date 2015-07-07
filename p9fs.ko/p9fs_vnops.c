@@ -33,6 +33,80 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/vnode.h>
+#include <sys/mount.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/malloc.h>
+#include <sys/kernel.h>
+#include <sys/systm.h>
+
+#include "p9fs_proto.h"
+#include "p9fs_subr.h"
+
+struct vop_vector p9fs_vnops;
+static MALLOC_DEFINE(M_P9NODE, "p9fs_node", "p9fs node structures");
+
+/*
+ * Get a p9node.  Nodes are represented by (fid, qid) tuples in 9P2000.
+ * Fids are assigned by the client, while qids are assigned by the server.
+ *
+ * The caller is expected to have generated the FID via p9fs_getfid() and
+ * obtained the QID from the server via p9fs_client_walk() and friends.
+ */
+int
+p9fs_nget(struct mount *mp, struct p9fs_session *p9s,
+    uint32_t fid, struct p9fs_qid *qid,
+    int lkflags, struct p9fs_node **npp)
+{
+	int error = 0;
+	struct p9fs_node *np;
+	struct vnode *vp, *nvp;
+	struct thread *td = curthread;
+
+	*npp = NULL;
+	error = vfs_hash_get(mp, fid, lkflags, td, &vp, NULL, NULL);
+	if (error != 0)
+		return (error);
+	if (vp != NULL) {
+		*npp = vp->v_data;
+		return (0);
+	}
+
+	np = malloc(sizeof (struct p9fs_node), M_P9NODE, M_WAITOK);
+	getnewvnode_reserve(1);
+
+	error = getnewvnode("p9fs", mp, &p9fs_vnops, &nvp);
+	if (error != 0) {
+		getnewvnode_drop_reserve();
+		free(np, M_P9NODE);
+		return (error);
+	}
+	vp = nvp;
+	vn_lock(vp, LK_EXCLUSIVE);
+
+	error = insmntque(nvp, mp);
+	if (error != 0) {
+		/* vp was vput()'d by insmntque() */
+		return (error);
+	}
+	error = vfs_hash_insert(nvp, fid, lkflags, td, &nvp, NULL, NULL);
+	if (error != 0)
+		return (error);
+	if (nvp != NULL) {
+		*npp = nvp->v_data;
+		/* vp was vput()'d by vfs_hash_insert() */
+		return (0);
+	}
+
+	/* Our vnode is the winner.  Set up the new p9node for it. */
+	np->p9n_fid = fid;
+	np->p9n_session = p9s;
+	np->p9n_vnode = vp;
+	bcopy(qid, &np->p9n_qid, sizeof (*qid));
+	*npp = np;
+
+	return (error);
+}
 
 static int
 p9fs_lookup(struct vop_cachedlookup_args *ap)
@@ -157,6 +231,17 @@ p9fs_inactive(struct vop_inactive_args *ap)
 static int
 p9fs_reclaim(struct vop_reclaim_args *ap)
 {
+	struct p9fs_node *np = ap->a_vp->v_data;
+	int error;
+
+	/* Failure should never happen here. */
+	error = p9fs_client_clunk(np->p9n_session, np->p9n_fid);
+	if (error != 0) {
+		printf("%s: error %d\n", __func__, error);
+		//return (error);
+	}
+	p9fs_relfid(np->p9n_session, np->p9n_fid);
+
 	return (0);
 }
 

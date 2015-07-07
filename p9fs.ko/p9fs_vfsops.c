@@ -236,33 +236,10 @@ out:
 	return (error);
 }
 
-static void
-p9fs_mount_alloc(struct p9fsmount **p9mpp, struct mount *mp)
-{
-	struct p9fs_session *p9s;
-
-	*p9mpp = malloc(sizeof (struct p9fsmount), M_P9MNT, M_WAITOK | M_ZERO);
-	mp->mnt_data = *p9mpp;
-	(*p9mpp)->p9_mountp = mp;
-
-	p9s = &(*p9mpp)->p9_session;
-	mtx_init(&p9s->p9s_lock, "p9s->p9s_lock", NULL, MTX_DEF);
-	TAILQ_INIT(&p9s->p9s_recv.p9r_reqs);
-	(void) strlcpy(p9s->p9s_uname, "root", sizeof ("root"));
-	p9s->p9s_uid = 0;
-	p9s->p9s_fid = NOFID;
-	p9s->p9s_afid = NOFID;
-
-	/* Default values. */
-	(*p9mpp)->p9_session.p9s_socktype = SOCK_STREAM;
-	(*p9mpp)->p9_session.p9s_proto = IPPROTO_TCP;
-}
-
 static int
 p9fs_unmount(struct mount *mp, int mntflags)
 {
 	struct p9fsmount *p9mp = VFSTOP9(mp);
-	struct p9fs_session *p9s = &p9mp->p9_session;
 	int error, flags, i;
 
 	error = 0;
@@ -285,34 +262,7 @@ p9fs_unmount(struct mount *mp, int mntflags)
 	if (error != 0)
 		goto out;
 
-	mtx_lock(&p9s->p9s_lock);
-	if (p9s->p9s_sock != NULL) {
-		struct p9fs_recv *p9r = &p9s->p9s_recv;
-		struct sockbuf *rcv = &p9s->p9s_sock->so_rcv;
-
-		p9s->p9s_state = P9S_CLOSING;
-		mtx_unlock(&p9s->p9s_lock);
-
-		SOCKBUF_LOCK(rcv);
-		soupcall_clear(p9s->p9s_sock, SO_RCV);
-		while (p9r->p9r_soupcalls > 0)
-			(void) msleep(&p9r->p9r_soupcalls, SOCKBUF_MTX(rcv),
-			    0, "p9rcvup", 0);
-		SOCKBUF_UNLOCK(rcv);
-		(void) soclose(p9s->p9s_sock);
-
-		/*
-		 * XXX Can there really be any such threads?  If vflush()
-		 *     has completed, there shouldn't be.  See if we can
-		 *     remove this and related code later.
-		 */
-		mtx_lock(&p9s->p9s_lock);
-		while (p9s->p9s_threads > 0)
-			msleep(p9s, &p9s->p9s_lock, 0, "p9sclose", 0);
-		p9s->p9s_state = P9S_CLOSED;
-	}
-	mtx_unlock(&p9s->p9s_lock);
-
+	p9fs_close_session(&p9mp->p9_session);
 	free(p9mp, M_P9MNT);
 	mp->mnt_data = NULL;
 
@@ -320,10 +270,14 @@ out:
 	return (error);
 }
 
+/* For the root vnode's vnops. */
+extern struct vop_vector p9fs_vnops;
+
 static int
 p9fs_mount(struct mount *mp)
 {
 	struct p9fsmount *p9mp;
+	struct p9fs_session *p9s;
 	int error;
 
 	error = EINVAL;
@@ -333,7 +287,12 @@ p9fs_mount(struct mount *mp)
 	if (mp->mnt_flag & MNT_UPDATE)
 		return (p9fs_mount_parse_opts(mp));
 
-	p9fs_mount_alloc(&p9mp, mp);
+	/* Allocate and initialize the private mount structure. */
+	p9mp = malloc(sizeof (struct p9fsmount), M_P9MNT, M_WAITOK | M_ZERO);
+	mp->mnt_data = p9mp;
+	p9mp->p9_mountp = mp;
+	p9fs_init_session(&p9mp->p9_session);
+	p9s = &p9mp->p9_session;
 
 	error = p9fs_mount_parse_opts(mp);
 	if (error != 0)
@@ -345,11 +304,22 @@ p9fs_mount(struct mount *mp)
 	}
 
 	/* Negotiate with the remote service.  XXX: Add auth call. */
-	error = p9fs_client_version(&p9mp->p9_session);
+	error = p9fs_client_version(p9s);
+	if (error == 0) {
+		/* Initialize the root vnode just before attaching. */
+		struct vnode *vp;
+		struct p9fs_node *np = &p9s->p9s_rootnp;
+
+		np->p9n_fid = ROOTFID;
+		np->p9n_session = p9s;
+		error = getnewvnode("p9fs", mp, &p9fs_vnops, &vp);
+		if (error == 0)
+			np->p9n_vnode = vp;
+	}
 	if (error == 0)
-		error = p9fs_client_attach(&p9mp->p9_session);
+		error = p9fs_client_attach(p9s);
 	if (error == 0)
-		p9mp->p9_session.p9s_state = P9S_RUNNING;
+		p9s->p9s_state = P9S_RUNNING;
 
 out:
 	if (error != 0)
@@ -357,49 +327,14 @@ out:
 	return (error);
 }
 
-extern struct vop_vector p9fs_vnops;
-
 static int
 p9fs_root(struct mount *mp, int lkflags, struct vnode **vpp)
 {
 	struct p9fsmount *p9mp = VFSTOP9(mp);
-	struct p9fs_session *p9s = &p9mp->p9_session;
-	struct thread *td = curthread;
-	struct vnode *nvp, *vp;
-	int error;
-	u_int hash;
+	struct p9fs_node *np = &p9mp->p9_session.p9s_rootnp;
 
-	*vpp = NULL;
-	hash = fnv_32_buf(p9s->p9s_path, strlen(p9s->p9s_path), FNV1_32_INIT);
-	error = vfs_hash_get(mp, hash, lkflags, td, &nvp, NULL, NULL);
-	if (error != 0)
-		return (error);
-	if (nvp != NULL) {
-		*vpp = nvp;
-		return (0);
-	}
-
-	error = getnewvnode("p9fs", mp, &p9fs_vnops, &nvp);
-	if (error != 0) {
-		return (error);
-	}
-	vp = nvp;
-	vn_lock(vp, LK_EXCLUSIVE);
-
-	error = insmntque(vp, mp);
-	if (error != 0) {
-		/* vp was vput()'d by insmntque() */
-		return (error);
-	}
-	error = vfs_hash_insert(nvp, hash, lkflags, td, &nvp, NULL, NULL);
-	if (error != 0)
-		return (error);
-	if (nvp != NULL) {
-		*vpp = nvp;
-		/* vp was vput()'d by vfs_hash_insert() */
-		return (0);
-	}
-	*vpp = vp;
+	*vpp = np->p9n_vnode;
+	vn_lock(*vpp, lkflags);
 
 	return (0);
 }
