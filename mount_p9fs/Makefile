@@ -12,6 +12,9 @@ MOUNT=	${.CURDIR}/../mount
 .if !exists(${.CURDIR}/../mount) && defined(WORLDDIR)
 MOUNT=	${WORLDDIR}/sbin/mount
 .endif
+.if !exists(${MOUNT}) && exists(/usr/src/Makefile.inc1)
+MOUNT=	/usr/src/sbin/mount
+.endif
 .if !exists(${MOUNT})
 .error "Unable to find sbin/mount source tree, specify WORLDDIR"
 .endif

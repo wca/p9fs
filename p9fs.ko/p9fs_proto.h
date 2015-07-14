@@ -281,6 +281,37 @@ struct p9fs_qid {
 	uint64_t qid_path;
 } __attribute__((packed));
 
+enum p9fs_qid_type {
+	QTDIR =		0x80,
+	QTAPPEND =	0x40,
+	QTEXCL =	0x20,
+	QTMOUNT =	0x10,
+	QTAUTH =	0x08,
+	QTTMP =		0x04,
+	QTLINK =	0x02,
+	QTFILE =	0x00,
+};
+
+/* From 9P2000.u pages 9-10 */
+enum p9fs_mode {
+	DMDIR =		0x80000000,
+	DMAPPEND =	0x40000000,
+	DMEXCL =	0x20000000,
+	DMMOUNT =	0x10000000,
+	DMAUTH =	0x08000000,
+	DMTMP =		0x04000000,
+	DMSYMLINK =	0x02000000,
+	/* 9P2000.u extensions */
+	DMDEVICE =	0x00800000,
+	DMNAMEDPIPE =	0x00200000,
+	DMSOCKET =	0x00100000,
+	DMSETUID =	0x00080000,
+	DMSETGID =	0x00040000,
+
+	/* Use this to select only the above upper bits. */
+	P9MODEUPPER =	0xffff0000,
+};
+
 /* Plan9-specific stat structure */
 struct p9fs_stat {
 	uint16_t stat_size;
@@ -572,9 +603,20 @@ enum p9s_state {
 
 struct p9fs_session;
 
+struct p9fs_node_user {
+	uint32_t p9nu_read_fid;
+	uint16_t p9nu_read_refs;
+	uint32_t p9nu_write_fid;
+	uint16_t p9nu_write_refs;
+	uint32_t p9nu_append_fid;
+	uint16_t p9nu_append_refs;
+};
+
 /* A Plan9 node. */
 struct p9fs_node {
 	uint32_t p9n_fid;
+	uint32_t p9n_ofid;
+	uint32_t p9n_opens;
 	struct p9fs_qid p9n_qid;
 	struct vnode *p9n_vnode;
 	struct p9fs_session *p9n_session;
@@ -597,6 +639,7 @@ struct p9fs_session {
 	uint32_t p9s_afid;
 	char p9s_path[MAXPATHLEN];
 
+	struct mount *p9s_mount;
 	struct p9fs_node p9s_rootnp;
 
 	/* Units for fids and tags; protected by p9s_lock. */
@@ -604,7 +647,7 @@ struct p9fs_session {
 	struct unrhdr *p9s_tags;
 };
 
-typedef int (*Rstat_callback)(struct p9fs_stat_u_payload *, void *);
+typedef int (*io_callback)(void *, uint32_t, size_t *, struct uio *);
 
 /* Primary 9P2000.u client API calls. */
 int p9fs_client_version(struct p9fs_session *);
@@ -615,17 +658,22 @@ int p9fs_client_error(struct p9fs_session *, void **, enum p9fs_msg_type);
 int p9fs_client_flush(void);
 int p9fs_client_open(struct p9fs_session *, uint32_t, int);
 int p9fs_client_create(void);
-int p9fs_client_read(void);
-int p9fs_client_write(void);
+int p9fs_client_read(struct p9fs_session *, uint32_t, io_callback, struct uio *);
+int p9fs_client_write(struct p9fs_session *, uint32_t, io_callback, struct uio *);
 int p9fs_client_remove(void);
-int p9fs_client_stat(struct p9fs_session *, uint32_t, Rstat_callback, void *);
+int p9fs_client_stat(struct p9fs_session *, uint32_t, struct vattr *);
 int p9fs_client_wstat(void);
 int p9fs_client_walk(struct p9fs_session *, uint32_t, uint32_t *, size_t,
-    const char *);
+    const char *, struct p9fs_qid *);
+
+/* Helpers for working with API data. */
+int p9fs_client_uio_callback(void *, uint32_t, size_t *, struct uio *);
+void p9fs_client_parse_std_stat(void *, struct p9fs_stat_payload *, size_t *);
+void p9fs_client_parse_u_stat(void *, struct p9fs_stat_u_payload *, size_t *);
 
 /* Wrapper API calls. */
-int p9fs_nget(struct mount *, struct p9fs_session *, uint32_t,
-    struct p9fs_qid *, int, struct p9fs_node **);
+int p9fs_nget(struct p9fs_session *, uint32_t, struct p9fs_qid *,
+    int, struct p9fs_node **);
 int p9fs_client_getnode(struct p9fs_node *, char *, struct p9fs_node **);
 
 /* Helpers for managing tags and fids. */

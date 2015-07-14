@@ -258,6 +258,7 @@ p9fs_unmount(struct mount *mp, int mntflags)
 		error = tsleep(&error, PSOCK, "p9unmnt", 1);
 		if (error == EINTR)
 			break;
+		error = EBUSY;
 	}
 	if (error != 0)
 		goto out;
@@ -293,6 +294,7 @@ p9fs_mount(struct mount *mp)
 	p9mp->p9_mountp = mp;
 	p9fs_init_session(&p9mp->p9_session);
 	p9s = &p9mp->p9_session;
+	p9s->p9s_mount = mp;
 
 	error = p9fs_mount_parse_opts(mp);
 	if (error != 0)
@@ -307,14 +309,29 @@ p9fs_mount(struct mount *mp)
 	error = p9fs_client_version(p9s);
 	if (error == 0) {
 		/* Initialize the root vnode just before attaching. */
-		struct vnode *vp;
+		struct vnode *vp, *ivp;
 		struct p9fs_node *np = &p9s->p9s_rootnp;
 
 		np->p9n_fid = ROOTFID;
 		np->p9n_session = p9s;
 		error = getnewvnode("p9fs", mp, &p9fs_vnops, &vp);
+		if (error == 0) {
+			vn_lock(vp, LK_EXCLUSIVE);
+			error = insmntque(vp, mp);
+		}
+		ivp = NULL;
 		if (error == 0)
+			error = vfs_hash_insert(vp, ROOTFID, LK_EXCLUSIVE,
+			    curthread, &ivp, NULL, NULL);
+		if (error == 0 && ivp != NULL)
+			error = EBUSY;
+		if (error == 0) {
 			np->p9n_vnode = vp;
+			vp->v_data = np;
+			vp->v_type = VDIR;
+			vp->v_vflag |= VV_ROOT;
+			VOP_UNLOCK(vp, 0);
+		}
 	}
 	if (error == 0)
 		error = p9fs_client_attach(p9s);
@@ -334,6 +351,7 @@ p9fs_root(struct mount *mp, int lkflags, struct vnode **vpp)
 	struct p9fs_node *np = &p9mp->p9_session.p9s_rootnp;
 
 	*vpp = np->p9n_vnode;
+	vref(*vpp);
 	vn_lock(*vpp, lkflags);
 
 	return (0);
@@ -342,7 +360,17 @@ p9fs_root(struct mount *mp, int lkflags, struct vnode **vpp)
 static int
 p9fs_statfs(struct mount *mp, struct statfs *sbp)
 {
-	return (EINVAL);
+
+	/*
+	 * XXX Uhhh..???
+	 *     There does not be a 9P2000 call for filesystem level info!
+	 *     Have to implement 9P2000.L statfs for that...
+	 */
+	sbp->f_version = STATFS_VERSION;
+	sbp->f_bsize = DEV_BSIZE;
+	sbp->f_iosize = MAXPHYS;
+	sbp->f_blocks = 2; /* from devfs: 1K to keep df happy */
+	return (0);
 }
 
 static int

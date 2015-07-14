@@ -48,6 +48,8 @@ __FBSDID("$FreeBSD$");
 #include <sys/mbuf.h>
 #include <sys/fcntl.h>
 #include <sys/mount.h>
+#include <sys/uio.h>
+#include <sys/vnode.h>
 
 #include "p9fs_proto.h"
 #include "p9fs_subr.h"
@@ -287,6 +289,11 @@ p9fs_client_error(struct p9fs_session *p9s, void **mp,
 		p9fs_msg_get_str(m, &off, &p9str);
 		p9fs_msg_get(m, &off, (void *)&proto_err, sizeof (*proto_err));
 		errcode = *proto_err;
+		printf("%s: Rerror ret: errcode=%d err(%d)='%.*s'\n",
+		    __func__, errcode, p9str.p9str_size,
+		    p9str.p9str_size, p9str.p9str_str);
+		if (errcode == -1)
+			errcode = EIO;
 	}
 	p9fs_msg_destroy(p9s, m);
 	*mp = NULL;
@@ -384,6 +391,29 @@ p9fs_client_create(void)
 }
 
 /*
+ * Common i/o callback for uio users.  This will be used by higher layers
+ * that want to use read/write directly via uio, without custom translation.
+ * Other callers have the choice to do additional processing.
+ */
+int
+p9fs_client_uio_callback(void *mp, uint32_t count, size_t *offp, struct uio *uio)
+{
+	int error = 0;
+
+	if (uio->uio_rw == UIO_WRITE) {
+		uio->uio_offset += count;
+		uio->uio_resid -= count;
+	} else {
+		uint8_t *buf;
+
+		p9fs_msg_get(mp, offp, (void *)&buf, count);
+		error = uiomove(buf, count, uio);
+	}
+
+	return (error);
+}
+
+/*
  * read, write - transfer data to and from a file
  *
  *   size[4] Tread tag[2] fid[4] offset[8] count[4]
@@ -398,15 +428,113 @@ p9fs_client_create(void)
  *
  */
 int
-p9fs_client_read(void)
+p9fs_client_read(struct p9fs_session *p9s, uint32_t fid,
+    io_callback iocb, struct uio *uio)
 {
-	return (EINVAL);
+	void *m;
+	int error = 0;
+	uint64_t off;
+	uint32_t count;
+
+	if (iocb == NULL || uio->uio_offset < 0 || uio->uio_rw != UIO_READ)
+		return (EINVAL);
+
+	off = uio->uio_offset;
+	CTASSERT(P9_MSG_MAX <= UINT32_MAX);
+	count = MIN(P9_MSG_MAX, uio->uio_resid);
+	if (count == 0)
+		return (0);
+
+retry:
+	m = p9fs_msg_create(Tread, p9fs_gettag(p9s));
+	if (m == NULL)
+		return (ENOBUFS);
+
+	if (error == 0) /* fid[4] */
+		error = p9fs_msg_add(m, sizeof (uint32_t), &fid);
+	if (error == 0) /* offset[8] */
+		error = p9fs_msg_add(m, sizeof (uint64_t), &off);
+	if (error == 0) /* count[4] */
+		error = p9fs_msg_add(m, sizeof (uint32_t), &count);
+	if (error != 0) {
+		p9fs_msg_destroy(p9s, m);
+		return (error);
+	}
+
+	error = p9fs_msg_send(p9s, &m);
+	if (error == EMSGSIZE)
+		goto retry;
+
+	if (m != NULL) {
+		size_t off = sizeof (struct p9fs_msg_hdr);
+		uint32_t *retcount;
+
+		error = p9fs_client_error(p9s, &m, Rread);
+		if (error != 0)
+			return (error);
+
+		p9fs_msg_get(m, &off, (void *)&retcount, sizeof (*retcount));
+		error = iocb(m, *retcount, &off, uio);
+		p9fs_msg_destroy(p9s, m);
+	}
+
+	return (error);
 }
 
 int
-p9fs_client_write(void)
+p9fs_client_write(struct p9fs_session *p9s, uint32_t fid,
+    io_callback iocb, struct uio *uio)
 {
-	return (EINVAL);
+	void *m;
+	int error = 0;
+	uint64_t off;
+	uint32_t count;
+
+	if (iocb == NULL || uio->uio_offset < 0 || uio->uio_rw != UIO_WRITE)
+		return (EINVAL);
+
+	off = uio->uio_offset;
+	CTASSERT(P9_MSG_MAX <= UINT32_MAX);
+	count = MIN(P9_MSG_MAX, uio->uio_resid);
+	if (count == 0)
+		return (0);
+
+retry:
+	m = p9fs_msg_create(Twrite, p9fs_gettag(p9s));
+	if (m == NULL)
+		return (ENOBUFS);
+
+	if (error == 0) /* fid[4] */
+		error = p9fs_msg_add(m, sizeof (uint32_t), &fid);
+	if (error == 0) /* offset[8] */
+		error = p9fs_msg_add(m, sizeof (uint64_t), &off);
+	if (error == 0) /* count[4] */
+		error = p9fs_msg_add(m, sizeof (uint32_t), &count);
+	if (error == 0) /* data[count] */
+		error = p9fs_msg_add_uio(m, uio, count);
+	if (error != 0) {
+		p9fs_msg_destroy(p9s, m);
+		return (error);
+	}
+
+	error = p9fs_msg_send(p9s, m);
+	if (error == EMSGSIZE)
+		goto retry;
+
+	if (m != NULL) {
+		size_t off = sizeof (struct p9fs_msg_hdr);
+		uint32_t *retcount;
+
+		error = p9fs_client_error(p9s, &m, Rwrite);
+		if (error != 0)
+			return (error);
+
+		p9fs_msg_get(m, &off, (void *)&retcount, sizeof (*retcount));
+		error = iocb(m, *retcount, &off, uio);
+		p9fs_msg_destroy(p9s, m);
+	}
+
+	return (error);
 }
 
 /*
@@ -427,16 +555,60 @@ p9fs_client_remove(void)
 }
 
 /* Parse the 9P2000-only portion of Rstat from the message. */
-static void
+void
 p9fs_client_parse_std_stat(void *m, struct p9fs_stat_payload *pay, size_t *offp)
 {
-	*offp = sizeof (struct p9fs_msg_hdr);
+	size_t soff = *offp;
 
 	p9fs_msg_get(m, offp, (void **)&pay->pay_stat, sizeof (*pay->pay_stat));
+	{
+		struct p9fs_stat *p9stat = pay->pay_stat;
+		printf("p9stat: size=%u type=%u dev=%u qid=(%u,%u,%lu) "
+		    "mode=%u atime=%u mtime=%u length=%lu\n",
+		    p9stat->stat_size, p9stat->stat_type,
+		    p9stat->stat_dev, p9stat->stat_qid.qid_mode,
+		    p9stat->stat_qid.qid_version,
+		    p9stat->stat_qid.qid_path, p9stat->stat_mode,
+		    p9stat->stat_atime, p9stat->stat_mtime,
+		    p9stat->stat_length);
+	}
 	p9fs_msg_get_str(m, offp, &pay->pay_name);
 	p9fs_msg_get_str(m, offp, &pay->pay_uid);
 	p9fs_msg_get_str(m, offp, &pay->pay_gid);
 	p9fs_msg_get_str(m, offp, &pay->pay_muid);
+	printf("p9stat: name='%.*s' uid='%.*s' gid='%.*s' muid='%.*s'\n",
+	    pay->pay_name.p9str_size, pay->pay_name.p9str_str,
+	    pay->pay_uid.p9str_size, pay->pay_uid.p9str_str,
+	    pay->pay_gid.p9str_size, pay->pay_gid.p9str_str,
+	    pay->pay_muid.p9str_size, pay->pay_muid.p9str_str);
+	printf("p9stat: start off %zu end off %zu\n", soff, *offp);
+}
+
+/* Parse the 9P2000.u-only portion of Rstat from the message. */
+void
+p9fs_client_parse_u_stat(void *m, struct p9fs_stat_u_payload *pay, size_t *offp)
+{
+	size_t soff = *offp;
+
+	p9fs_client_parse_std_stat(m, &pay->upay_std, offp);
+	p9fs_msg_get_str(m, offp, &pay->upay_extension);
+	p9fs_msg_get(m, offp, (void **)&pay->upay_footer,
+	    sizeof (pay->upay_footer));
+
+	printf("p9stat.u: ext='%.*s' uid=%d gid=%d muid=%d\n",
+	    pay->upay_extension.p9str_size, pay->upay_extension.p9str_str,
+	    pay->upay_footer->n_uid, pay->upay_footer->n_gid, pay->upay_footer->n_muid);
+	printf("p9stat.u: start off %zu end off %zu\n", soff, *offp);
+}
+
+static void
+print_vattr(struct vattr *vap, uint32_t fid)
+{
+	printf("vattr(fid=%u %p)={\n", fid, vap);
+	printf("  atime=%ld mtime=%ld\n", vap->va_atime.tv_sec, vap->va_mtime.tv_sec);
+	printf("  mode=%o bytes=%lu\n", vap->va_mode, vap->va_bytes);
+	printf("  type=%d fileid=%lu\n", vap->va_type, vap->va_fileid);
+	printf("}\n");
 }
 
 /*
@@ -452,24 +624,10 @@ p9fs_client_parse_std_stat(void *m, struct p9fs_stat_payload *pay, size_t *offp)
  * Tfid[4]: Fid to perform the stat call on.
  ********
  *
- * This function is used for both VOP_GETATTR(9) and VOP_READDIR(9), which
- * have very different output requirements.  As such, its primary job is to
- * perform the stat call and parse the response payload.
- *
- * For each Rstat[n] entry returned, cb will be called with pointers to:
- * - struct p9fs_stat, for the main body of the stat response
- * - struct p9fs_str pointers, for the name/uid/gid/muid/extension strings.
- * - struct p9fs_stat_u_footer, for the tail of the 9P2000.u stat response.
- *
- * In order to parse the entire payload, each of these must be teased from
- * the payload in turn, until the payload is exhausted.
- *
- * If cb returns non-zero, parsing will end immediately and the error return
- * will be forwarded to the caller.
+ * This is only used for p9fs_getattr(), so its call signature reflects that.
  */
 int
-p9fs_client_stat(struct p9fs_session *p9s, uint32_t fid, Rstat_callback cb,
-    void *cbarg)
+p9fs_client_stat(struct p9fs_session *p9s, uint32_t fid, struct vattr *vap)
 {
 	void *m;
 	int error = 0;
@@ -491,24 +649,84 @@ retry:
 		goto retry;
 
 	if (m != NULL) {
-		int32_t len = p9fs_msg_payload_len(m);
 		size_t off = 0;
 		struct p9fs_stat_u_payload upay = {};
+		struct p9fs_stat *p9stat;
+		struct p9fs_stat_u_footer *foot;
+		uint16_t *totsz;
 
 		error = p9fs_client_error(p9s, &m, Rstat);
 		if (error != 0)
 			return (error);
 
-		while (error == 0 && len > off) {
-			struct p9fs_stat_payload *pay = &upay.upay_std;
+		off = sizeof (struct p9fs_msg_hdr);
+		/*
+		 * XXX py9p sends a 'total stat size', is that correct?
+		 *     This behavior is not called out in the specs
+		 *     explicitly, but it does say "stat[n]", implying that
+		 *     more than one stat entry may be returned.
+		 */
+		p9fs_msg_get(m, &off, (void *)&totsz, sizeof (*totsz));
 
-			p9fs_client_parse_std_stat(m, pay, &off);
-			p9fs_msg_get_str(m, &off, &upay.upay_extension);
-			p9fs_msg_get(m, &off, (void **)&upay.upay_footer,
-			    sizeof (upay.upay_footer));
+		p9fs_client_parse_u_stat(m, &upay, &off);
+		p9stat = upay.upay_std.pay_stat;
 
-			error = cb(&upay, cbarg);
+		/* XXX number of links is not provided by 9P2000{,.u} */
+		vap->va_nlink = 1;
+		vap->va_atime.tv_sec = p9stat->stat_atime;
+		vap->va_mtime.tv_sec = p9stat->stat_mtime;
+		vap->va_ctime.tv_sec = p9stat->stat_mtime;
+		vap->va_size = p9stat->stat_length;
+		vap->va_bytes = p9stat->stat_length;
+		vap->va_rdev = p9stat->stat_dev;
+		vap->va_filerev = p9stat->stat_qid.qid_version;
+		vap->va_gen = p9stat->stat_qid.qid_version;
+		vap->va_mode = p9stat->stat_mode & ~P9MODEUPPER;
+		vap->va_fileid = p9stat->stat_qid.qid_path;
+		vap->va_blocksize = MAXPHYS;
+		/* Determine what type of file this is. */
+		switch (p9stat->stat_qid.qid_mode) {
+		case QTDIR:
+			vap->va_type = VDIR;
+			vap->va_nlink++;
+			break;
+		case QTLINK:
+			vap->va_type = VLNK;
+			break;
+		case QTFILE:
+			vap->va_type = VREG;
+			break;
+		default:
+			/* Try again from stat_mode's upper bits. */
+			switch (p9stat->stat_mode & P9MODEUPPER) {
+			case DMDEVICE:
+				vap->va_type = VBLK;
+				break;
+			case DMSYMLINK:
+				vap->va_type = VLNK;
+				break;
+			case DMSOCKET:
+				vap->va_type = VSOCK;
+				break;
+			case DMNAMEDPIPE:
+				vap->va_type = VFIFO;
+				break;
+			default:
+				/* XXX What should be done with other types? */
+				vap->va_type = VNON;
+				break;
+			}
+			break;
 		}
+		foot = upay.upay_footer;
+		vap->va_uid = foot->n_uid;
+		vap->va_gid = foot->n_gid;
+#if 0
+		print_vattr(vap, fid);
+		{
+		}
+#endif
+
 		p9fs_msg_destroy(p9s, m);
 	}
 
@@ -541,11 +759,11 @@ p9fs_client_wstat(void)
  */
 int
 p9fs_client_walk(struct p9fs_session *p9s, uint32_t fid, uint32_t *newfid,
-    size_t namelen, const char *namestr)
+    size_t namelen, const char *namestr, struct p9fs_qid *qidp)
 {
 	void *m;
 	int error = 0;
-	uint16_t nwname = 1;
+	uint16_t nwname = namestr == NULL ? 0 : 1;
 
 retry:
 	m = p9fs_msg_create(Twalk, p9fs_gettag(p9s));
@@ -558,7 +776,7 @@ retry:
 		error = p9fs_msg_add(m, sizeof (*newfid), newfid);
 	if (error == 0) /* nwname[2] */
 		error = p9fs_msg_add(m, sizeof (uint16_t), &nwname);
-	if (error == 0) /* the sole wname[s] */
+	if (error == 0 && nwname == 1) /* the sole wname[s] */
 		error = p9fs_msg_add_string(m, namestr, namelen);
 	if (error != 0) {
 		p9fs_msg_destroy(p9s, m);
@@ -579,14 +797,15 @@ retry:
 			return (error);
 
 		p9fs_msg_get(m, &off, (void *)&nwqid, sizeof (*nwqid));
-		if (*nwqid != 1) {
-			/* XXX: How could this scenario occur? */
+		if (nwname != *nwqid) {
+			/* XXX: How else could this occur other than ENOENT? */
 			error = ENOENT;
 		}
-		if (error == 0) {
+		/* Return the qid; this only applies if not a self-walk. */
+		if (error == 0 && nwname == 1) {
 			p9fs_msg_get(m, &off, (void *)&qid,
 			    sizeof (struct p9fs_qid));
-			/* XXX Copy qid to vnode? */
+			bcopy(qid, qidp, sizeof (struct p9fs_qid));
 		}
 		p9fs_msg_destroy(p9s, m);
 	}

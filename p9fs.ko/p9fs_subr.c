@@ -47,6 +47,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/mount.h>
 #include <netinet/in.h>
 #include <sys/limits.h>
+#include <sys/vnode.h>
 
 #include "p9fs_proto.h"
 #include "p9fs_subr.h"
@@ -108,6 +109,18 @@ p9fs_msg_add_string(void *mp, const char *str, uint16_t len)
 		return (EINVAL);
 	if (m_append(m, len, str) == 0)
 		return (EINVAL);
+	return (0);
+}
+
+int
+p9fs_msg_add_uio(void *mp, struct uio *uio, uint32_t count)
+{
+	struct mbuf *m = mp;
+	struct mbuf *uiom;
+
+	uiom = m_uiotombuf(uio, M_WAITOK, count, /*align*/ 0, /*flags*/ 0);
+	m_cat(m, uiom);
+
 	return (0);
 }
 

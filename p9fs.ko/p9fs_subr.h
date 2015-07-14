@@ -35,6 +35,7 @@
 void *p9fs_msg_create(enum p9fs_msg_type, uint16_t);
 int p9fs_msg_add(void *, size_t, void *);
 int p9fs_msg_add_string(void *, const char *, uint16_t);
+int p9fs_msg_add_uio(void *, struct uio *, uint32_t);
 int p9fs_msg_send(struct p9fs_session *, void **);
 void p9fs_msg_recv(struct p9fs_session *);
 void p9fs_msg_get(void *, size_t *, void **, size_t);
